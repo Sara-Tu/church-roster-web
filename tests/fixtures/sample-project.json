@@ -146,7 +146,8 @@
       "perWeek": 1,
       "appliesTo": {
         "kind": "all"
-      }
+      },
+      "pairsWith": "r2"
     },
     {
       "id": "r2",

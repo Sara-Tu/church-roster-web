@@ -10,6 +10,24 @@
 
 ---
 
+## 0.2.0 — 2026-10-22（Phase 1：引擎移植）
+
+把舊版 429 行 Python 引擎移植成 TypeScript。對外只有一個純函式 `runScheduler(project)`，
+指派順序與每個角色用哪種策略全部由資料決定，不再寫死角色名或人名。
+
+- `src/engine/`：新增 `dates`、`rules`、`state`、`context`、`eligibility`、`ordering`、
+  `strategies`、`run`、`index` 九個模組
+- 三種指派策略取代舊版四個寫死角色名的函式：成對指派（`Role.pairsWith`）、固定組合輪替
+  （`rotation_groups`）、單純填滿
+- `src/engine/schema.ts`：`Role` 新增選填的 `pairsWith`，表示兩個角色要一起排
+- 15 種限制條件全部實作，並補上舊版沒有的 `substitute_priority.prefer`
+- 入口驗證：所有 id 參照、日期格式、成對關係都會逐項檢查，有問題丟
+  `ProjectValidationError` 並帶完整問題清單（取代舊版對不上就靜默忽略的行為）
+- 新增 `softViolations` 輸出：固定組合被拆開、完全沒用上固定組合、動用最後手段人員
+- 修掉舊版四個缺陷：輪替群組為空時 `% 0` 崩潰、姓名對不上靜默忽略、soft 規則不回報、
+  `forbidden_together` 不檢查完整組合本身
+- 測試 64 個：parity（26 週與 golden 深度相等）、15 種規則的生效／不生效、引擎行為
+
 ## 0.1.0 — 2026-10-22（Phase 0：骨架）
 
 - 建立 Vite + React + TypeScript + Tailwind + vitest 專案骨架

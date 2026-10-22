@@ -55,6 +55,11 @@ export interface Role {
   /** 每次聚會需要幾人 */
   perWeek: number;
   appliesTo: RoleApplicability;
+  /**
+   * 成對指派：這兩個位置要一起排、互相挑人（領會 → 司琴）。
+   * 只寫在主角色上；被指向的角色不會再單獨排一次。見規格 §6.4.3
+   */
+  pairsWith?: RoleId;
 }
 
 export type RoleApplicability =
