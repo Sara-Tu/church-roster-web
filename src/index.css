@@ -1,0 +1,27 @@
+@import 'tailwindcss';
+
+/* 設計 token：與下載的 Excel 同一套配色（見 docs/網頁版規格.md §7.4） */
+@theme {
+  --color-brand: #2f4f8f;
+  --color-brand-light: #4a7bbf;
+  --color-communion: #fff2cc;
+  --color-stripe: #f5f5f5;
+  --color-ink: #1a1a1a;
+  --color-ink-muted: #666666;
+  --color-alert: #c0392b;
+  --color-notice: #e67e22;
+
+  --font-sans: 'Noto Sans TC', 'Microsoft JhengHei', system-ui, sans-serif;
+}
+
+body {
+  margin: 0;
+  background-color: #ffffff;
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+}
+
+/* 日期與次數欄位用等寬數字對齊 */
+.tabular {
+  font-variant-numeric: tabular-nums;
+}

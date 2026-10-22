@@ -1,0 +1,785 @@
+{
+  "schemaVersion": 1,
+  "appVersion": "0.1.0",
+  "exportedAt": "2026-10-22",
+  "church": {
+    "name": "",
+    "note": "parity 測試用匿名 fixture，姓名已換成代號"
+  },
+  "term": {
+    "name": "測試梯次 2026H2",
+    "start": "2026-07-05",
+    "end": "2026-12-27",
+    "weeks": [
+      {
+        "date": "2026-07-05",
+        "tags": [
+          "communion"
+        ]
+      },
+      {
+        "date": "2026-07-12",
+        "tags": []
+      },
+      {
+        "date": "2026-07-19",
+        "tags": []
+      },
+      {
+        "date": "2026-07-26",
+        "tags": []
+      },
+      {
+        "date": "2026-08-02",
+        "tags": [
+          "communion"
+        ]
+      },
+      {
+        "date": "2026-08-09",
+        "tags": []
+      },
+      {
+        "date": "2026-08-16",
+        "tags": []
+      },
+      {
+        "date": "2026-08-23",
+        "tags": []
+      },
+      {
+        "date": "2026-08-30",
+        "tags": []
+      },
+      {
+        "date": "2026-09-06",
+        "tags": [
+          "communion"
+        ]
+      },
+      {
+        "date": "2026-09-13",
+        "tags": []
+      },
+      {
+        "date": "2026-09-20",
+        "tags": []
+      },
+      {
+        "date": "2026-09-27",
+        "tags": []
+      },
+      {
+        "date": "2026-10-04",
+        "tags": [
+          "communion"
+        ]
+      },
+      {
+        "date": "2026-10-11",
+        "tags": []
+      },
+      {
+        "date": "2026-10-18",
+        "tags": []
+      },
+      {
+        "date": "2026-10-25",
+        "tags": []
+      },
+      {
+        "date": "2026-11-01",
+        "tags": [
+          "communion"
+        ]
+      },
+      {
+        "date": "2026-11-08",
+        "tags": []
+      },
+      {
+        "date": "2026-11-15",
+        "tags": []
+      },
+      {
+        "date": "2026-11-22",
+        "tags": []
+      },
+      {
+        "date": "2026-11-29",
+        "tags": []
+      },
+      {
+        "date": "2026-12-06",
+        "tags": [
+          "communion"
+        ]
+      },
+      {
+        "date": "2026-12-13",
+        "tags": []
+      },
+      {
+        "date": "2026-12-20",
+        "tags": []
+      },
+      {
+        "date": "2026-12-27",
+        "tags": []
+      }
+    ]
+  },
+  "weekTags": [
+    {
+      "id": "communion",
+      "label": "聖餐週",
+      "rule": {
+        "kind": "nthMeetingOfMonth",
+        "n": 1
+      }
+    }
+  ],
+  "roles": [
+    {
+      "id": "r1",
+      "name": "領會",
+      "perWeek": 1,
+      "appliesTo": {
+        "kind": "all"
+      }
+    },
+    {
+      "id": "r2",
+      "name": "司琴",
+      "perWeek": 1,
+      "appliesTo": {
+        "kind": "all"
+      }
+    },
+    {
+      "id": "r3",
+      "name": "音控",
+      "perWeek": 2,
+      "appliesTo": {
+        "kind": "all"
+      }
+    },
+    {
+      "id": "r4",
+      "name": "招待",
+      "perWeek": 2,
+      "appliesTo": {
+        "kind": "all"
+      }
+    },
+    {
+      "id": "r5",
+      "name": "聖餐",
+      "perWeek": 2,
+      "appliesTo": {
+        "kind": "weekTag",
+        "tagId": "communion"
+      }
+    }
+  ],
+  "members": [
+    {
+      "id": "m1",
+      "name": "M01",
+      "roles": [
+        "r1",
+        "r2"
+      ],
+      "unavailable": []
+    },
+    {
+      "id": "m2",
+      "name": "M02",
+      "roles": [
+        "r1",
+        "r2"
+      ],
+      "unavailable": []
+    },
+    {
+      "id": "m3",
+      "name": "M03",
+      "roles": [
+        "r1"
+      ],
+      "unavailable": [
+        "2026-07-05",
+        "2026-08-02",
+        "2026-08-30",
+        "2026-10-04",
+        "2026-11-08",
+        "2026-12-06"
+      ]
+    },
+    {
+      "id": "m4",
+      "name": "M04",
+      "roles": [
+        "r1"
+      ],
+      "unavailable": []
+    },
+    {
+      "id": "m5",
+      "name": "M05",
+      "roles": [
+        "r1",
+        "r3"
+      ],
+      "unavailable": []
+    },
+    {
+      "id": "m6",
+      "name": "M06",
+      "roles": [
+        "r1",
+        "r2",
+        "r3"
+      ],
+      "unavailable": [
+        "2026-07-26",
+        "2026-10-25",
+        "2026-12-06"
+      ]
+    },
+    {
+      "id": "m7",
+      "name": "M07",
+      "roles": [
+        "r1",
+        "r4",
+        "r5"
+      ],
+      "unavailable": [
+        "2026-09-27",
+        "2026-10-11"
+      ]
+    },
+    {
+      "id": "m8",
+      "name": "M08",
+      "roles": [
+        "r1"
+      ],
+      "unavailable": [
+        "2026-08-16",
+        "2026-08-30",
+        "2026-09-06",
+        "2026-10-25",
+        "2026-11-15",
+        "2026-12-06",
+        "2026-12-13"
+      ]
+    },
+    {
+      "id": "m9",
+      "name": "M09",
+      "roles": [
+        "r1",
+        "r4"
+      ],
+      "unavailable": []
+    },
+    {
+      "id": "m10",
+      "name": "M10",
+      "roles": [
+        "r1",
+        "r4",
+        "r5"
+      ],
+      "unavailable": [
+        "2026-09-06",
+        "2026-09-13"
+      ]
+    },
+    {
+      "id": "m11",
+      "name": "M11",
+      "roles": [
+        "r1"
+      ],
+      "unavailable": []
+    },
+    {
+      "id": "m12",
+      "name": "M12",
+      "roles": [
+        "r1",
+        "r3"
+      ],
+      "unavailable": []
+    },
+    {
+      "id": "m13",
+      "name": "M13",
+      "roles": [
+        "r1",
+        "r3",
+        "r5"
+      ],
+      "unavailable": []
+    },
+    {
+      "id": "m14",
+      "name": "M14",
+      "roles": [
+        "r2"
+      ],
+      "unavailable": [
+        "2026-07-12",
+        "2026-08-09",
+        "2026-08-16",
+        "2026-09-13",
+        "2026-09-27",
+        "2026-10-11",
+        "2026-11-22",
+        "2026-12-13"
+      ]
+    },
+    {
+      "id": "m15",
+      "name": "M15",
+      "roles": [
+        "r2"
+      ],
+      "unavailable": [
+        "2026-07-05",
+        "2026-07-12",
+        "2026-08-09",
+        "2026-08-16",
+        "2026-08-23",
+        "2026-09-20",
+        "2026-10-11",
+        "2026-11-01",
+        "2026-11-08",
+        "2026-12-27"
+      ]
+    },
+    {
+      "id": "m16",
+      "name": "M16",
+      "roles": [
+        "r2"
+      ],
+      "unavailable": []
+    },
+    {
+      "id": "m17",
+      "name": "M17",
+      "roles": [
+        "r2",
+        "r3"
+      ],
+      "unavailable": [
+        "2026-07-05",
+        "2026-07-12",
+        "2026-07-19",
+        "2026-07-26",
+        "2026-08-23",
+        "2026-08-30",
+        "2026-10-25"
+      ]
+    },
+    {
+      "id": "m18",
+      "name": "M18",
+      "roles": [
+        "r3"
+      ],
+      "unavailable": []
+    },
+    {
+      "id": "m19",
+      "name": "M19",
+      "roles": [
+        "r3"
+      ],
+      "unavailable": [
+        "2026-09-06"
+      ]
+    },
+    {
+      "id": "m20",
+      "name": "M20",
+      "roles": [
+        "r3",
+        "r5"
+      ],
+      "unavailable": [
+        "2026-07-05",
+        "2026-08-02",
+        "2026-09-06",
+        "2026-09-27",
+        "2026-10-04",
+        "2026-11-08",
+        "2026-12-06"
+      ]
+    },
+    {
+      "id": "m21",
+      "name": "M21",
+      "roles": [
+        "r3"
+      ],
+      "unavailable": [
+        "2026-07-05",
+        "2026-08-02",
+        "2026-08-30",
+        "2026-10-04",
+        "2026-11-08",
+        "2026-12-06"
+      ]
+    },
+    {
+      "id": "m22",
+      "name": "M22",
+      "roles": [
+        "r4"
+      ],
+      "unavailable": []
+    },
+    {
+      "id": "m23",
+      "name": "M23",
+      "roles": [
+        "r4"
+      ],
+      "unavailable": [
+        "2026-11-22"
+      ]
+    },
+    {
+      "id": "m24",
+      "name": "M24",
+      "roles": [
+        "r1",
+        "r4",
+        "r5"
+      ],
+      "unavailable": [
+        "2026-09-13",
+        "2026-11-08"
+      ]
+    },
+    {
+      "id": "m25",
+      "name": "M25",
+      "roles": [
+        "r4"
+      ],
+      "unavailable": [
+        "2026-09-13",
+        "2026-11-08"
+      ]
+    },
+    {
+      "id": "m26",
+      "name": "M26",
+      "roles": [
+        "r4",
+        "r5"
+      ],
+      "unavailable": [
+        "2026-09-20"
+      ]
+    },
+    {
+      "id": "m27",
+      "name": "M27",
+      "roles": [
+        "r4"
+      ],
+      "unavailable": []
+    },
+    {
+      "id": "m28",
+      "name": "M28",
+      "roles": [
+        "r4"
+      ],
+      "unavailable": []
+    }
+  ],
+  "constraints": [
+    {
+      "id": "c1",
+      "hard": true,
+      "enabled": true,
+      "note": "同一人同一週最多一個角色",
+      "type": "one_role_per_week"
+    },
+    {
+      "id": "c2",
+      "hard": true,
+      "enabled": true,
+      "note": "M02 可以同時擔任領會和司琴",
+      "type": "dual_role_exception",
+      "memberId": "m2",
+      "roleIds": [
+        "r1",
+        "r2"
+      ]
+    },
+    {
+      "id": "c3",
+      "hard": true,
+      "enabled": true,
+      "note": "M02 當領會或司琴時，M18 不能當音控（反之亦然）",
+      "type": "forbidden_role_combination",
+      "entries": [
+        {
+          "memberId": "m2",
+          "roleIds": [
+            "r1",
+            "r2"
+          ]
+        },
+        {
+          "memberId": "m18",
+          "roleIds": [
+            "r3"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "c4",
+      "hard": true,
+      "enabled": true,
+      "note": "M04 領會時 M16 必須司琴，方向不可調換",
+      "type": "required_pair",
+      "a": {
+        "memberId": "m4",
+        "roleId": "r1"
+      },
+      "b": {
+        "memberId": "m16",
+        "roleId": "r2"
+      },
+      "directional": true
+    },
+    {
+      "id": "c5",
+      "hard": true,
+      "enabled": true,
+      "note": "M12 每月所有服事合計最多 1 次",
+      "type": "max_per_month",
+      "memberId": "m12",
+      "max": 1,
+      "roleId": null
+    },
+    {
+      "id": "c6",
+      "hard": true,
+      "enabled": true,
+      "note": "M21 每月所有服事合計最多 1 次",
+      "type": "max_per_month",
+      "memberId": "m21",
+      "max": 1,
+      "roleId": null
+    },
+    {
+      "id": "c7",
+      "hard": true,
+      "enabled": true,
+      "note": "M15 整梯次司琴最多 3 次",
+      "type": "max_per_term_role",
+      "memberId": "m15",
+      "roleId": "r2",
+      "max": 3
+    },
+    {
+      "id": "c8",
+      "hard": true,
+      "enabled": true,
+      "note": "M17 整梯次司琴最多 3 次",
+      "type": "max_per_term_role",
+      "memberId": "m17",
+      "roleId": "r2",
+      "max": 3
+    },
+    {
+      "id": "c9",
+      "hard": true,
+      "enabled": true,
+      "note": "每人整梯次服事總次數上限 10 次",
+      "type": "max_total_per_term",
+      "max": 10,
+      "memberId": null
+    },
+    {
+      "id": "c10",
+      "hard": true,
+      "enabled": true,
+      "note": "M01 只能排在 8/9（含）之前",
+      "type": "availability_window",
+      "memberId": "m1",
+      "until": "2026-08-09"
+    },
+    {
+      "id": "c11",
+      "hard": true,
+      "enabled": true,
+      "note": "M17 只能排在 9/6（含）之後",
+      "type": "availability_window",
+      "memberId": "m17",
+      "from": "2026-09-06"
+    },
+    {
+      "id": "c12",
+      "hard": true,
+      "enabled": true,
+      "note": "領會至少間隔 4 週，一梯次最多 3 次",
+      "type": "role_frequency",
+      "roleId": "r1",
+      "minGapWeeks": 4,
+      "maxPerTerm": 3
+    },
+    {
+      "id": "c13",
+      "hard": false,
+      "enabled": true,
+      "note": "音控 4 組固定配對，依週次輪替",
+      "type": "rotation_groups",
+      "roleId": "r3",
+      "groups": [
+        [
+          "m18",
+          "m19"
+        ],
+        [
+          "m20",
+          "m17"
+        ],
+        [
+          "m13",
+          "m12"
+        ],
+        [
+          "m21",
+          "m5"
+        ]
+      ],
+      "cycleBy": "week"
+    },
+    {
+      "id": "c14",
+      "hard": false,
+      "enabled": true,
+      "note": "招待 4 組固定配對，依當月第幾次聚會輪替",
+      "type": "rotation_groups",
+      "roleId": "r4",
+      "groups": [
+        [
+          "m22",
+          "m23"
+        ],
+        [
+          "m24",
+          "m25"
+        ],
+        [
+          "m10",
+          "m26"
+        ],
+        [
+          "m27",
+          "m9"
+        ]
+      ],
+      "cycleBy": "month"
+    },
+    {
+      "id": "c15",
+      "hard": true,
+      "enabled": true,
+      "note": "同一組音控不能連續兩週",
+      "type": "max_consecutive_same_group",
+      "roleId": "r3",
+      "max": 1
+    },
+    {
+      "id": "c16",
+      "hard": true,
+      "enabled": true,
+      "note": "同一組招待不能連續兩週",
+      "type": "max_consecutive_same_group",
+      "roleId": "r4",
+      "max": 1
+    },
+    {
+      "id": "c17",
+      "hard": true,
+      "enabled": true,
+      "note": "同一人連續兩週服事，整梯次最多發生 1 次",
+      "type": "max_consecutive_weeks_per_member",
+      "max": 1
+    },
+    {
+      "id": "c18",
+      "hard": true,
+      "enabled": true,
+      "note": "音控拆夥時，這四人任選兩人不能互相搭配",
+      "type": "forbidden_together",
+      "roleId": "r3",
+      "memberIds": [
+        "m17",
+        "m12",
+        "m19",
+        "m5"
+      ],
+      "mode": "any_two"
+    },
+    {
+      "id": "c19",
+      "hard": false,
+      "enabled": true,
+      "note": "招待缺人時優先找 M28，M07 是最後手段",
+      "type": "substitute_priority",
+      "roleId": "r4",
+      "prefer": [
+        "m28"
+      ],
+      "lastResort": [
+        "m7"
+      ]
+    },
+    {
+      "id": "c20",
+      "hard": false,
+      "enabled": true,
+      "note": "M24 領會時偏好 M06 司琴",
+      "type": "preferred_role_combination",
+      "when": {
+        "memberId": "m24",
+        "roleId": "r1"
+      },
+      "prefer": {
+        "memberId": "m6",
+        "roleId": "r2"
+      }
+    },
+    {
+      "id": "c21",
+      "hard": false,
+      "enabled": true,
+      "note": "M13 領會時偏好 M17 司琴",
+      "type": "preferred_role_combination",
+      "when": {
+        "memberId": "m13",
+        "roleId": "r1"
+      },
+      "prefer": {
+        "memberId": "m17",
+        "roleId": "r2"
+      }
+    }
+  ],
+  "revision": 0
+}

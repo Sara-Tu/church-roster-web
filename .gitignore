@@ -1,0 +1,10 @@
+node_modules/
+dist/
+coverage/
+.vite/
+*.local
+.DS_Store
+
+# 教會自己的專案檔（含真實姓名）絕對不進這個公開 repo
+*.church.json
+private/
