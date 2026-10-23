@@ -557,3 +557,72 @@ describe('持久化', () => {
     expect(store.getState().storage.backupKey).toMatch(/unreadable-/);
   });
 });
+
+describe('產生班表', () => {
+  /** 排得出班表的最小設定：一個位置、兩個人、四週 */
+  function ready(store: ReturnType<typeof createAppStore>) {
+    store.getState().setTermName('測試梯次');
+    store.getState().setTermStart('2027-01-03');
+    store.getState().setTermEnd('2027-01-31');
+    store.getState().generateWeeks();
+    for (const role of [...store.getState().project.roles].slice(1)) {
+      store.getState().deleteRole(role.id);
+    }
+    store.getState().addMembersFromText('小明\n小華');
+    const roleId = store.getState().project.roles[0].id;
+    for (const member of store.getState().project.members) {
+      store.getState().setMemberRole(member.id, roleId, true);
+    }
+  }
+
+  it('第一次產生就是 r1，再產生一次變 r2', () => {
+    const store = createAppStore(null);
+    ready(store);
+
+    const first = store.getState().generateRoster();
+    expect(first).toEqual({ ok: true, revision: 1 });
+    expect(store.getState().project.revision).toBe(1);
+    expect(store.getState().roster?.revision).toBe(1);
+    expect(store.getState().roster?.result.weeks).toHaveLength(
+      store.getState().project.term.weeks.length,
+    );
+
+    expect(store.getState().generateRoster()).toEqual({ ok: true, revision: 2 });
+    expect(store.getState().roster?.revision).toBe(2);
+  });
+
+  it('引擎丟錯時不動 revision，也不留半份班表', () => {
+    const store = createAppStore(null);
+    ready(store);
+    // 參照不存在的人員：引擎的入口驗證會丟錯
+    store.getState().replaceConstraints([
+      {
+        id: 'c9',
+        type: 'max_total_per_term',
+        hard: true,
+        enabled: true,
+        memberId: 'm99',
+        max: 3,
+      },
+    ]);
+
+    const outcome = store.getState().generateRoster();
+    expect(outcome.ok).toBe(false);
+    expect(store.getState().project.revision).toBe(0);
+    expect(store.getState().roster).toBeNull();
+  });
+
+  it('班表存得回來，匯入別的專案時會清掉', () => {
+    const storage = fakeStorage();
+    const first = createAppStore(storage);
+    ready(first);
+    first.getState().generateRoster();
+    first.getState().flushSave();
+
+    const second = createAppStore(storage);
+    expect(second.getState().roster?.revision).toBe(1);
+
+    second.getState().loadProject(second.getState().project);
+    expect(second.getState().roster).toBeNull();
+  });
+});

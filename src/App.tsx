@@ -6,9 +6,9 @@ import { Nav } from './ui/Nav';
 import { Button } from './ui/parts';
 import { StepConstraints } from './ui/StepConstraints';
 import { StepMembers } from './ui/StepMembers';
+import { StepResult } from './ui/StepResult';
 import { StepRoles } from './ui/StepRoles';
 import { StepTerm } from './ui/StepTerm';
-import { StepTodo } from './ui/StepTodo';
 import { StepUnavailable } from './ui/StepUnavailable';
 import { isStepEmpty, LAST_GUIDE_INDEX, stepIndex } from './ui/steps';
 import { APP_VERSION } from './version';
@@ -52,7 +52,7 @@ export default function App() {
         {step === 'members' && <StepMembers />}
         {step === 'unavailable' && <StepUnavailable />}
         {step === 'constraints' && <StepConstraints />}
-        {step === 'result' && <StepTodo step={step} />}
+        {step === 'result' && <StepResult />}
 
         {!guideDone && (
           <div className="mt-8 flex items-center justify-between">

@@ -8,7 +8,7 @@
 import { create } from 'zustand';
 import { createStore } from 'zustand/vanilla';
 import type { StateCreator } from 'zustand';
-import { SCHEMA_VERSION, weekdayOf } from '../engine';
+import { runScheduler, SCHEMA_VERSION, weekdayOf } from '../engine';
 import type {
   Constraint,
   ConstraintType,
@@ -23,6 +23,8 @@ import { defaultRoles, moveRole as reorderRoles } from '../domain/roles';
 import { parseNameList, toggleRole } from '../domain/members';
 import type { ParsedNames } from '../domain/members';
 import { BASIC_TYPES, blankConstraint, isBasic } from '../domain/constraints';
+import { rosterInputHash } from '../domain/roster';
+import type { RosterSnapshot } from '../domain/roster';
 import { mergeDates, toggleDate } from '../domain/unavailable';
 import type { ImportMode, ParsedEntry } from '../domain/unavailable';
 import {
@@ -50,9 +52,14 @@ export interface StorageState {
   backupKey: string | null;
 }
 
+/** 產生班表的結果：成功就回第幾版，失敗回訊息（引擎丟出來的驗證錯誤） */
+export type GenerateOutcome = { ok: true; revision: number } | { ok: false; message: string };
+
 export interface AppState {
   project: Project;
   ui: UiState;
+  /** 產生過的班表，還沒產生過是 null */
+  roster: RosterSnapshot | null;
   storage: StorageState;
   counters: IdCounters;
 
@@ -103,6 +110,10 @@ export interface AppState {
   setConstraintNote: (id: string, note: string) => void;
   deleteConstraint: (id: string) => void;
   replaceConstraints: (constraints: readonly Constraint[]) => void;
+
+  // 結果頁
+  /** 跑排班引擎，revision +1，結果存進 state 與 localStorage */
+  generateRoster: () => GenerateOutcome;
 
   /** 匯入：整份換掉，導覽直接進頁籤模式並停在步驟 1 */
   loadProject: (project: Project) => void;
@@ -201,6 +212,7 @@ function makeAppState(storage: StorageLike | null): StateCreator<AppState> {
         savedAt: new Date().toISOString(),
         project: { ...state.project, appVersion: APP_VERSION },
         ui: state.ui,
+        roster: state.roster,
       });
       if (ok !== state.storage.writable) {
         set({ storage: { ...state.storage, writable: ok } });
@@ -235,6 +247,7 @@ function makeAppState(storage: StorageLike | null): StateCreator<AppState> {
     return {
       project,
       ui,
+      roster: loaded.saved?.roster ?? null,
       storage: { writable: storage !== null, backupKey: loaded.backupKey },
       counters: initCounters(project),
 
@@ -551,6 +564,29 @@ function makeAppState(storage: StorageLike | null): StateCreator<AppState> {
           };
         }),
 
+      // ── 結果頁 ──
+      generateRoster: () => {
+        const source = get().project;
+        let result;
+        try {
+          result = runScheduler(source);
+        } catch (error) {
+          return { ok: false, message: error instanceof Error ? error.message : String(error) };
+        }
+
+        const revision = source.revision + 1;
+        commit((state) => ({
+          project: { ...state.project, revision },
+          roster: {
+            result,
+            generatedAt: new Date().toISOString(),
+            revision,
+            inputHash: rosterInputHash(source),
+          },
+        }));
+        return { ok: true, revision };
+      },
+
       // ── 匯入 ──
       loadProject: (incoming) => {
         const weeks = incoming.term.weeks;
@@ -566,6 +602,8 @@ function makeAppState(storage: StorageLike | null): StateCreator<AppState> {
         commit(() => ({
           project: ensured.project,
           counters: ensured.counters,
+          // 換了一份專案，舊的班表不算數
+          roster: null,
           ui: {
             step: 'term',
             guideDone: true,

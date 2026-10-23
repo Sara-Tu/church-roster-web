@@ -40,6 +40,7 @@ function savedState(): SavedState {
       meetingWeekday: 0,
       generatedFrom: null,
     },
+    roster: null,
   };
 }
 

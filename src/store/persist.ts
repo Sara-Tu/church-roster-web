@@ -8,6 +8,7 @@
 
 import { SCHEMA_VERSION } from '../engine';
 import type { Project } from '../engine';
+import type { RosterSnapshot } from '../domain/roster';
 import type { StepId } from '../ui/steps';
 
 export const STORAGE_KEY = 'church-roster/project/v1';
@@ -25,6 +26,8 @@ export interface SavedState {
   savedAt: string;
   project: Project;
   ui: PersistedUi;
+  /** 產生過的班表。舊存檔沒有這個欄位，讀回來是 null */
+  roster: RosterSnapshot | null;
 }
 
 export type StorageLike = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>;
@@ -100,7 +103,8 @@ function parse(raw: string): SavedState | null {
   if (!isRecord(value)) return null;
   if (value.schemaVersion !== SCHEMA_VERSION) return null;
   if (!isProject(value.project) || !isUi(value.ui)) return null;
-  return value as unknown as SavedState;
+  if (!isRoster(value.roster)) return { ...(value as unknown as SavedState), roster: null };
+  return { ...(value as unknown as SavedState), roster: (value.roster as SavedState['roster']) ?? null };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -117,6 +121,12 @@ function isProject(value: unknown): boolean {
     Array.isArray(value.constraints) &&
     Array.isArray(value.weekTags)
   );
+}
+
+/** 班表只做最低檢查：壞掉就當成沒有，不要因為它讓整份存檔讀不回來 */
+function isRoster(value: unknown): boolean {
+  if (value === null || value === undefined) return true;
+  return isRecord(value) && isRecord(value.result) && Array.isArray(value.result.weeks);
 }
 
 function isUi(value: unknown): boolean {
