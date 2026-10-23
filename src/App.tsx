@@ -10,11 +10,12 @@ import { StepRoles } from './ui/StepRoles';
 import { StepTerm } from './ui/StepTerm';
 import { StepTodo } from './ui/StepTodo';
 import { StepUnavailable } from './ui/StepUnavailable';
-import { LAST_GUIDE_INDEX, stepIndex } from './ui/steps';
+import { isStepEmpty, LAST_GUIDE_INDEX, stepIndex } from './ui/steps';
 import { APP_VERSION } from './version';
 
 export default function App() {
   const step = useAppStore((state) => state.ui.step);
+  const project = useAppStore((state) => state.project);
   const guideDone = useAppStore((state) => state.ui.guideDone);
   const nextStep = useAppStore((state) => state.nextStep);
   const prevStep = useAppStore((state) => state.prevStep);
@@ -27,7 +28,8 @@ export default function App() {
   }, [flushSave]);
 
   const index = stepIndex(step);
-  const skippable = step === 'unavailable' || step === 'constraints';
+  const last = index === LAST_GUIDE_INDEX;
+  const skippable = isStepEmpty(project, step);
 
   return (
     <div className="flex min-h-screen flex-col bg-stripe">
@@ -58,7 +60,13 @@ export default function App() {
               ← 上一步
             </Button>
             <Button tone="primary" onClick={nextStep}>
-              {skippable ? '跳過，下一步 →' : index === LAST_GUIDE_INDEX ? '完成 →' : '下一步 →'}
+              {skippable
+                ? last
+                  ? '跳過，完成 →'
+                  : '跳過，下一步 →'
+                : last
+                  ? '完成 →'
+                  : '下一步 →'}
             </Button>
           </div>
         )}

@@ -1,3 +1,6 @@
+import { isBasic } from '../domain/constraints';
+import type { Project } from '../engine';
+
 export const STEPS = [
   { id: 'term', label: '梯次' },
   { id: 'roles', label: '服事位置' },
@@ -23,4 +26,20 @@ export function stepIndex(id: StepId): number {
 
 export function stepLabel(id: StepId): string {
   return ALL_STEPS.find((step) => step.id === id)?.label ?? id;
+}
+
+/**
+ * 這一步是不是還完全沒填。按鈕要不要寫「跳過」看這個 —— 已經填了東西還寫「跳過」，
+ * 會讓人以為剛才填的不算數（規格 §7.7.7）。只有可跳過的兩步要判斷。
+ */
+export function isStepEmpty(project: Project, step: StepId): boolean {
+  switch (step) {
+    case 'unavailable':
+      return project.members.every((member) => member.unavailable.length === 0);
+    case 'constraints':
+      // 基本規則是系統自己加的，不算使用者填過東西
+      return !project.constraints.some((constraint) => !isBasic(constraint.type));
+    default:
+      return false;
+  }
 }
