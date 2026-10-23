@@ -3,7 +3,7 @@
 import { useMemo, useState } from 'react';
 import { collectIssues } from '../domain/issues';
 import { buildView, formatMd, roleName, rosterInputHash, rosterFilename } from '../domain/roster';
-import type { RosterSnapshot, RosterView } from '../domain/roster';
+import type { RosterNote, RosterSnapshot, RosterView } from '../domain/roster';
 import { rosterCsv } from '../io/csv';
 import { downloadBlob, downloadText } from '../io/download';
 import { useAppStore } from '../store/project';
@@ -254,6 +254,8 @@ function PersonTable({ view }: { view: RosterView }) {
 // ── 警告與偏好 ──────────────────────────────────────────────────────────────
 
 function NotesCard({ view }: { view: RosterView }) {
+  const [open, setOpen] = useState<string | null>(null);
+
   if (view.warnings.length === 0 && view.soft.length === 0) {
     return (
       <Card title="警告">
@@ -266,13 +268,29 @@ function NotesCard({ view }: { view: RosterView }) {
     <Card title="警告" hint="紅色是硬性規則排不出來、橘色是偏好沒排到（班表仍然有效）。">
       <div className="flex flex-col gap-4">
         {view.warnings.length > 0 && (
-          <ul className="flex flex-col gap-1 text-sm text-alert">
-            {view.warnings.map((note, i) => (
-              <li key={`${note.date}-${i}`}>
-                <span className="tabular">{note.label}</span>
-                {note.roleName !== '' && ` ${note.roleName}`}：{note.message}
-              </li>
-            ))}
+          <ul className="flex flex-col gap-2 text-sm text-alert">
+            {view.warnings.map((note, i) => {
+              const key = `${note.date}-${i}`;
+              return (
+                <li key={key}>
+                  <span className="tabular">{note.label}</span>
+                  {note.roleName !== '' && ` ${note.roleName}`}：{note.message}
+                  {note.blocked.length > 0 && (
+                    <>
+                      {' '}
+                      <button
+                        type="button"
+                        className="underline underline-offset-2"
+                        onClick={() => setOpen(open === key ? null : key)}
+                      >
+                        {open === key ? '收起' : '為什麼？'}
+                      </button>
+                      {open === key && <BlockedTable note={note} />}
+                    </>
+                  )}
+                </li>
+              );
+            })}
           </ul>
         )}
         {view.soft.length > 0 && (
@@ -287,6 +305,36 @@ function NotesCard({ view }: { view: RosterView }) {
         )}
       </div>
     </Card>
+  );
+}
+
+/** 這一週每一位有資格的人分別卡在哪裡。排得上的人排在最前面（規格 §7.9.4） */
+function BlockedTable({ note }: { note: RosterNote }) {
+  const rows = [...note.blocked].sort(
+    (a, b) => Number(b.servable) - Number(a.servable),
+  );
+  return (
+    <div className="mt-2 overflow-x-auto rounded-lg border border-neutral-200">
+      <table className="w-full border-collapse text-sm text-ink">
+        <thead>
+          <tr>
+            {/* 這張小表格不釘表頭：它在警告列底下展開，sticky 會蓋住自己的前幾列 */}
+            <th className="bg-brand px-3 py-1.5 text-left font-medium text-white">有資格的人</th>
+            <th className="bg-brand px-3 py-1.5 text-left font-medium text-white">為什麼不能排</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row, i) => (
+            <tr key={`${row.name}-${i}`} className={i % 2 === 0 ? 'bg-neutral-50' : ''}>
+              <td className="whitespace-nowrap px-3 py-1.5">{row.name}</td>
+              <td className={`px-3 py-1.5 ${row.servable ? 'text-notice' : 'text-ink-muted'}`}>
+                {row.reason}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }
 

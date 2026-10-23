@@ -2,6 +2,8 @@
 
 import { useState } from 'react';
 import type { Constraint, RoleSlot } from '../engine';
+import { pinnedSlotLabel } from '../domain/constraints';
+import { useAppStore } from '../store/project';
 import { Button, IconButton, INPUT_CLASS } from './parts';
 import { EditorRow, MemberChips, MemberPicker, NumberInput, RoleChips, RolePicker } from './pickers';
 
@@ -73,10 +75,26 @@ export function ConstraintEditor({
       return (
         <>
           <EditorRow title="誰">
-            <MemberPicker
-              value={constraint.memberId === '' ? null : constraint.memberId}
-              onChange={(value) => onChange({ ...constraint, memberId: value ?? '' })}
-            />
+            <select
+              className={INPUT_CLASS}
+              value={constraint.memberId === null ? 'all' : 'one'}
+              onChange={(event) =>
+                onChange({
+                  ...constraint,
+                  memberId: event.target.value === 'all' ? null : '',
+                })
+              }
+              aria-label="套用範圍"
+            >
+              <option value="one">指定某一個人</option>
+              <option value="all">每一個人</option>
+            </select>
+            {constraint.memberId !== null && (
+              <MemberPicker
+                value={constraint.memberId === '' ? null : constraint.memberId}
+                onChange={(value) => onChange({ ...constraint, memberId: value ?? '' })}
+              />
+            )}
           </EditorRow>
           <EditorRow title="每月最多">
             <NumberInput
@@ -209,80 +227,7 @@ export function ConstraintEditor({
       );
 
     case 'rotation_groups':
-      return (
-        <>
-          <EditorRow title="哪個位置">
-            <RolePicker
-              value={constraint.roleId === '' ? null : constraint.roleId}
-              onChange={(value) => onChange({ ...constraint, roleId: value ?? '' })}
-            />
-          </EditorRow>
-          <EditorRow title="輪替方式">
-            <select
-              className={INPUT_CLASS}
-              value={constraint.cycleBy}
-              onChange={(event) =>
-                onChange({
-                  ...constraint,
-                  cycleBy: event.target.value === 'month' ? 'month' : 'week',
-                })
-              }
-            >
-              <option value="week">依週次（第幾週）</option>
-              <option value="month">依當月第幾次聚會</option>
-            </select>
-          </EditorRow>
-
-          {constraint.groups.map((group, index) => (
-            <div key={index} className="rounded-lg border border-neutral-200 p-3">
-              <div className="mb-2 flex items-center justify-between">
-                <span className="text-sm font-medium">第 {index + 1} 組</span>
-                <span>
-                  <IconButton
-                    label="上移"
-                    disabled={index === 0}
-                    onClick={() => onChange({ ...constraint, groups: move(constraint.groups, index, -1) })}
-                  >
-                    ↑
-                  </IconButton>
-                  <IconButton
-                    label="下移"
-                    disabled={index === constraint.groups.length - 1}
-                    onClick={() => onChange({ ...constraint, groups: move(constraint.groups, index, 1) })}
-                  >
-                    ↓
-                  </IconButton>
-                  <IconButton
-                    label="刪除這一組"
-                    onClick={() =>
-                      onChange({
-                        ...constraint,
-                        groups: constraint.groups.filter((_, i) => i !== index),
-                      })
-                    }
-                  >
-                    刪除
-                  </IconButton>
-                </span>
-              </div>
-              <MemberChips
-                selected={group}
-                onChange={(members) =>
-                  onChange({
-                    ...constraint,
-                    groups: constraint.groups.map((item, i) => (i === index ? members : item)),
-                  })
-                }
-              />
-            </div>
-          ))}
-          <div>
-            <Button onClick={() => onChange({ ...constraint, groups: [...constraint.groups, []] })}>
-              新增一組
-            </Button>
-          </div>
-        </>
-      );
+      return <RotationEditor constraint={constraint} onChange={onChange} />;
 
     case 'max_consecutive_same_group':
       return (
@@ -398,6 +343,150 @@ function SlotRow({
       />
     </EditorRow>
   );
+}
+
+/**
+ * 輪替群組。每一組除了成員，還可以釘一個「當月第 N 次聚會」當偏好（規格 §7.9.2）。
+ * `pinnedSlots` 與 `groups` 同索引，所以搬動、刪除、新增都要兩邊一起動。
+ */
+function RotationEditor({
+  constraint,
+  onChange,
+}: {
+  constraint: Extract<Constraint, { type: 'rotation_groups' }>;
+  onChange: (next: Constraint) => void;
+}) {
+  const weeks = useAppStore((state) => state.project.term.weeks);
+  const slots = maxMeetingsPerMonth(weeks);
+  const pins = constraint.groups.map((_, i) => constraint.pinnedSlots?.[i] ?? null);
+
+  const write = (groups: readonly string[][], nextPins: readonly (number | null)[]) => {
+    onChange({
+      ...constraint,
+      groups: [...groups],
+      // 全部都沒釘就把欄位收掉，匯出的 JSON 不留空陣列
+      ...(nextPins.some((pin) => pin !== null)
+        ? { pinnedSlots: [...nextPins] }
+        : { pinnedSlots: undefined }),
+    });
+  };
+
+  return (
+    <>
+      <EditorRow title="哪個位置">
+        <RolePicker
+          value={constraint.roleId === '' ? null : constraint.roleId}
+          onChange={(value) => onChange({ ...constraint, roleId: value ?? '' })}
+        />
+      </EditorRow>
+      <EditorRow title="輪替方式">
+        <select
+          className={INPUT_CLASS}
+          value={constraint.cycleBy}
+          onChange={(event) =>
+            onChange({
+              ...constraint,
+              cycleBy: event.target.value === 'month' ? 'month' : 'week',
+            })
+          }
+        >
+          <option value="week">依週次（第幾週）</option>
+          <option value="month">依當月第幾次聚會</option>
+        </select>
+      </EditorRow>
+
+      {constraint.groups.map((group, index) => (
+        <div key={index} className="rounded-lg border border-neutral-200 p-3">
+          <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+            <span className="text-sm font-medium">第 {index + 1} 組</span>
+            <span className="flex items-center gap-2">
+              <label className="flex items-center gap-1 text-xs text-ink-muted">
+                固定在
+                <select
+                  className={`${INPUT_CLASS} max-w-40`}
+                  value={pins[index] === null ? '' : String(pins[index])}
+                  onChange={(event) =>
+                    write(
+                      constraint.groups,
+                      pins.map((pin, i) =>
+                        i === index
+                          ? event.target.value === ''
+                            ? null
+                            : Number(event.target.value)
+                          : pin,
+                      ),
+                    )
+                  }
+                >
+                  <option value="">不指定</option>
+                  {Array.from({ length: slots }, (_, i) => i + 1).map((n) => (
+                    <option key={n} value={n}>
+                      {pinnedSlotLabel(n)}
+                    </option>
+                  ))}
+                  <option value="-1">{pinnedSlotLabel(-1)}</option>
+                </select>
+              </label>
+              <IconButton
+                label="上移"
+                disabled={index === 0}
+                onClick={() =>
+                  write(move(constraint.groups, index, -1), move(pins, index, -1))
+                }
+              >
+                ↑
+              </IconButton>
+              <IconButton
+                label="下移"
+                disabled={index === constraint.groups.length - 1}
+                onClick={() => write(move(constraint.groups, index, 1), move(pins, index, 1))}
+              >
+                ↓
+              </IconButton>
+              <IconButton
+                label="刪除這一組"
+                onClick={() =>
+                  write(
+                    constraint.groups.filter((_, i) => i !== index),
+                    pins.filter((_, i) => i !== index),
+                  )
+                }
+              >
+                刪除
+              </IconButton>
+            </span>
+          </div>
+          <MemberChips
+            selected={group}
+            onChange={(members) =>
+              write(
+                constraint.groups.map((item, i) => (i === index ? members : item)),
+                pins,
+              )
+            }
+          />
+        </div>
+      ))}
+      <p className="text-xs text-ink-muted">
+        「固定在」是偏好：排不出來時引擎還是會用別的組，並在結果頁的警告裡記一筆。
+      </p>
+      <div>
+        <Button onClick={() => write([...constraint.groups, []], [...pins, null])}>
+          新增一組
+        </Button>
+      </div>
+    </>
+  );
+}
+
+/** 這個梯次裡，同一個月最多有幾次聚會。決定「固定在第幾次」的選項數量 */
+function maxMeetingsPerMonth(weeks: readonly { date: string }[]): number {
+  const counts = new Map<string, number>();
+  for (const week of weeks) {
+    const month = week.date.slice(0, 7);
+    counts.set(month, (counts.get(month) ?? 0) + 1);
+  }
+  return Math.min(5, Math.max(4, ...counts.values(), 0));
 }
 
 function move<T>(items: readonly T[], index: number, delta: number): T[] {

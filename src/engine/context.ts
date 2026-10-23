@@ -46,6 +46,8 @@ export interface EngineContext {
   readonly weekIndex: Map<IsoDate, number>;
   /** 聚會日期 → 當月第幾次聚會，從 0 起算（cycleBy: "month" 用） */
   readonly monthSlot: Map<IsoDate, number>;
+  /** 聚會日期 → 當月總共幾次聚會（釘選「當月最後一次」要用） */
+  readonly monthCount: Map<IsoDate, number>;
   readonly softViolations: SoftViolation[];
 }
 
@@ -66,6 +68,7 @@ export function createContext(project: Project): EngineContext {
 
   const weekIndex = new Map<IsoDate, number>();
   const monthSlot = new Map<IsoDate, number>();
+  const monthCount = new Map<IsoDate, number>();
   const seenInMonth = new Map<number, number>();
   project.term.weeks.forEach((week, i) => {
     weekIndex.set(week.date, i);
@@ -75,6 +78,9 @@ export function createContext(project: Project): EngineContext {
     monthSlot.set(week.date, slot);
     seenInMonth.set(month, slot + 1);
   });
+  for (const week of project.term.weeks) {
+    monthCount.set(week.date, seenInMonth.get(monthOf(week.date)) ?? 1);
+  }
 
   return {
     project,
@@ -87,6 +93,7 @@ export function createContext(project: Project): EngineContext {
     pools,
     weekIndex,
     monthSlot,
+    monthCount,
     softViolations: [],
   };
 }
@@ -214,10 +221,11 @@ function collectIds(
 function referencedMembers(constraint: Constraint): MemberId[] {
   switch (constraint.type) {
     case 'dual_role_exception':
-    case 'max_per_month':
     case 'max_per_term_role':
     case 'availability_window':
       return [constraint.memberId];
+    // null ＝ 套用到每一個人，沒有要檢查的參照
+    case 'max_per_month':
     case 'max_total_per_term':
       return constraint.memberId === null ? [] : [constraint.memberId];
     case 'forbidden_role_combination':

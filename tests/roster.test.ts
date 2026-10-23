@@ -173,7 +173,7 @@ describe('buildView 警告', () => {
       fairness: { perMember: [] },
     });
     expect(view.warnings).toEqual([
-      { date: '2026-01-04', label: '01/04', roleName: '聖餐', message: '人不夠' },
+      { date: '2026-01-04', label: '01/04', roleName: '聖餐', message: '人不夠', blocked: [] },
     ]);
     expect(view.soft[0].roleName).toBe('');
   });

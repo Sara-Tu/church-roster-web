@@ -1,7 +1,7 @@
 {
   "name": "church-roster-web",
   "private": true,
-  "version": "0.3.3",
+  "version": "0.3.4",
   "type": "module",
   "description": "教會服事排班工具（純前端，資料只留在瀏覽器）",
   "scripts": {

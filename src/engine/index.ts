@@ -5,6 +5,8 @@ export { ProjectValidationError, validateProject } from './context';
 export { SCHEMA_VERSION } from './schema';
 export { addDays, fromEpochDay, isIsoDate, toEpochDay, weekdayOf } from './dates';
 export type {
+  BlockedCandidate,
+  BlockReason,
   Constraint,
   ConstraintType,
   GoldenRoster,

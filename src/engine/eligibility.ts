@@ -10,7 +10,7 @@
 
 import type { EngineContext } from './context';
 import type { ForbiddenComboEntry } from './rules';
-import type { IsoDate, MemberId, RoleId } from './schema';
+import type { BlockReason, IsoDate, MemberId, RoleId } from './schema';
 
 export type WeekAssignments = Readonly<Record<RoleId, MemberId[]>>;
 
@@ -22,55 +22,93 @@ export function canServe(
   excluded: ReadonlySet<MemberId>,
   weekAssignments: WeekAssignments,
 ): boolean {
-  if (excluded.has(memberId)) return false;
+  return blockReason(ctx, memberId, roleId, date, excluded, weekAssignments) === null;
+}
+
+/**
+ * canServe 的詳細版：回傳第一個擋住這個人的原因，null = 可以排。
+ * 檢查順序與原本的 canServe 一字不差，所以排班結果不會因為這次改寫而變（規格 §7.9.4）。
+ */
+export function blockReason(
+  ctx: EngineContext,
+  memberId: MemberId,
+  roleId: RoleId,
+  date: IsoDate,
+  excluded: ReadonlySet<MemberId>,
+  weekAssignments: WeekAssignments,
+): BlockReason | null {
+  if (excluded.has(memberId)) {
+    return { kind: 'assigned_elsewhere', roleId: roleOfMember(weekAssignments, memberId) };
+  }
 
   const member = ctx.memberById.get(memberId);
-  if (member === undefined || !member.roles.includes(roleId)) return false;
+  if (member === undefined || !member.roles.includes(roleId)) return { kind: 'not_in_role' };
 
-  if (ctx.unavailable.get(memberId)?.has(date)) return false;
+  if (ctx.unavailable.get(memberId)?.has(date)) return { kind: 'unavailable' };
 
   for (const window of ctx.rules.windows.get(memberId) ?? []) {
-    if (window.until !== undefined && date > window.until) return false;
-    if (window.from !== undefined && date < window.from) return false;
+    if (window.until !== undefined && date > window.until) return { kind: 'outside_window' };
+    if (window.from !== undefined && date < window.from) return { kind: 'outside_window' };
   }
 
   for (const limit of ctx.rules.maxPerMonth) {
-    if (limit.memberId !== memberId) continue;
+    // memberId 為 null ＝ 這一條套用到每一個人
+    if (limit.memberId !== null && limit.memberId !== memberId) continue;
     const used =
       limit.roleId === null
         ? ctx.state.monthlyTotalOf(memberId, date)
         : limit.roleId === roleId
           ? ctx.state.monthlyRoleOf(memberId, roleId, date)
           : -1;
-    if (used >= limit.max) return false;
+    if (used >= limit.max) {
+      return { kind: 'max_per_month', max: limit.max, roleId: limit.roleId };
+    }
   }
 
   for (const limit of ctx.rules.maxTotalPerTerm) {
     if (limit.memberId !== null && limit.memberId !== memberId) continue;
-    if (ctx.state.termTotalOf(memberId) >= limit.max) return false;
+    if (ctx.state.termTotalOf(memberId) >= limit.max) {
+      return { kind: 'max_total_per_term', max: limit.max };
+    }
   }
 
   if (
     ctx.state.servedLastWeek(memberId, date) &&
     ctx.state.consecutiveOf(memberId) >= ctx.rules.maxConsecutiveWeeks
   ) {
-    return false;
+    return { kind: 'max_consecutive_weeks', max: ctx.rules.maxConsecutiveWeeks };
   }
 
   for (const limit of ctx.rules.maxPerTermRole) {
     if (limit.memberId !== memberId || limit.roleId !== roleId) continue;
-    if (ctx.state.termRoleOf(memberId, roleId) >= limit.max) return false;
+    if (ctx.state.termRoleOf(memberId, roleId) >= limit.max) {
+      return { kind: 'max_per_term_role', max: limit.max };
+    }
   }
 
   const frequency = ctx.rules.roleFrequency.get(roleId);
   if (frequency !== undefined) {
-    if (ctx.state.termRoleOf(memberId, roleId) >= frequency.maxPerTerm) return false;
-    if (ctx.state.weeksSinceRole(memberId, roleId, date) < frequency.minGapWeeks) return false;
+    if (ctx.state.termRoleOf(memberId, roleId) >= frequency.maxPerTerm) {
+      return { kind: 'role_frequency_total', max: frequency.maxPerTerm };
+    }
+    if (ctx.state.weeksSinceRole(memberId, roleId, date) < frequency.minGapWeeks) {
+      return { kind: 'role_frequency_gap', minGapWeeks: frequency.minGapWeeks };
+    }
   }
 
-  if (blockedByRoleCombination(ctx, memberId, roleId, weekAssignments)) return false;
+  if (blockedByRoleCombination(ctx, memberId, roleId, weekAssignments)) {
+    return { kind: 'forbidden_combination' };
+  }
 
-  return true;
+  return null;
+}
+
+/** 這個人本週已經被排在哪個位置。找不到就回 null（例如成對指派還沒寫進去的主角色） */
+function roleOfMember(weekAssignments: WeekAssignments, memberId: MemberId): RoleId | null {
+  for (const [roleId, members] of Object.entries(weekAssignments)) {
+    if (members.includes(memberId)) return roleId;
+  }
+  return null;
 }
 
 /** 這一筆管不管得到這個位置。空集合＝不限位置 */

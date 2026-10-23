@@ -44,7 +44,7 @@ export const CONSTRAINT_META: readonly ConstraintMeta[] = [
     type: 'max_per_month',
     label: '每月最多幾次',
     group: 'limits',
-    hint: '某個人每個月最多服事幾次，可以只算某一個位置。',
+    hint: '每個月最多服事幾次。可以套用到每一個人，也可以只限某一個人、只算某一個位置。',
     defaultHard: true,
   },
   {
@@ -133,7 +133,7 @@ export const CONSTRAINT_META: readonly ConstraintMeta[] = [
     type: 'rotation_groups',
     label: '輪替群組',
     group: 'rotation',
-    hint: '這個位置的固定搭檔分組，依週次或當月第幾次聚會輪替。',
+    hint: '這個位置的固定搭檔分組，依週次或當月第幾次聚會輪替。也可以把某一組盡量固定在當月第幾次聚會。',
     defaultHard: false,
   },
   {
@@ -266,6 +266,11 @@ function slotText(project: Project, slot: RoleSlot): string {
   return `${memberName(project, slot.memberId)} ${roleName(project, slot.roleId)}`;
 }
 
+/** 釘選值的中文說明：1 起算的「當月第 N 次聚會」，-1 代表當月最後一次 */
+export function pinnedSlotLabel(pin: number): string {
+  return pin === -1 ? '當月最後一次聚會' : `當月第 ${pin} 次聚會`;
+}
+
 /** 規則卡片上那一行人話。一律用姓名與位置名稱，不露出 id */
 export function describeConstraint(project: Project, constraint: Constraint): string {
   switch (constraint.type) {
@@ -295,7 +300,9 @@ export function describeConstraint(project: Project, constraint: Constraint): st
       }`;
 
     case 'max_per_month':
-      return `${memberName(project, constraint.memberId)} 每月最多 ${constraint.max} 次${
+      return `${
+        constraint.memberId === null ? '每一個人' : memberName(project, constraint.memberId)
+      } 每月最多 ${constraint.max} 次${
         constraint.roleId === null
           ? '（所有位置合計）'
           : `（只算 ${roleName(project, constraint.roleId)}）`
@@ -327,14 +334,23 @@ export function describeConstraint(project: Project, constraint: Constraint): st
         constraint.minGapWeeks
       } 週，整梯次最多 ${constraint.maxPerTerm} 次`;
 
-    case 'rotation_groups':
-      return `${roleName(project, constraint.roleId)} 依${
+    case 'rotation_groups': {
+      const base = `${roleName(project, constraint.roleId)} 依${
         constraint.cycleBy === 'week' ? '週次' : '當月第幾次聚會'
       }輪替：${
         constraint.groups.length === 0
           ? '（還沒分組）'
           : constraint.groups.map((group) => memberNames(project, group)).join(' → ')
       }`;
+      const pinned = (constraint.pinnedSlots ?? [])
+        .map((pin, index) =>
+          pin === null || pin === undefined
+            ? null
+            : `第 ${index + 1} 組固定在${pinnedSlotLabel(pin)}`,
+        )
+        .filter((text): text is string => text !== null);
+      return pinned.length === 0 ? base : `${base}；${pinned.join('、')}`;
+    }
 
     case 'max_consecutive_same_group':
       return `${roleName(project, constraint.roleId)} 同一組不能連續超過 ${constraint.max} 週`;
@@ -425,7 +441,8 @@ export function validateConstraint(project: Project, constraint: Constraint): st
       break;
 
     case 'max_per_month':
-      member(constraint.memberId);
+      // null ＝ 套用到每一個人，不算沒填完
+      if (constraint.memberId !== null) member(constraint.memberId);
       positive(constraint.max, '每月次數上限');
       if (constraint.roleId !== null) role(constraint.roleId);
       break;
@@ -466,14 +483,27 @@ export function validateConstraint(project: Project, constraint: Constraint): st
       positive(constraint.maxPerTerm, '整梯次次數上限');
       break;
 
-    case 'rotation_groups':
+    case 'rotation_groups': {
       role(constraint.roleId);
       if (constraint.groups.length === 0) issues.push('至少要有一組');
       constraint.groups.forEach((group) => {
         if (group.length === 0) issues.push('有一組是空的');
         group.forEach((id) => member(id));
       });
+      const pins = constraint.pinnedSlots ?? [];
+      if (pins.length > constraint.groups.length) issues.push('釘選的組數比實際的組數還多');
+      const taken = new Set<number>();
+      pins.forEach((pin) => {
+        if (pin === null || pin === undefined) return;
+        if (!Number.isInteger(pin) || (pin < 1 && pin !== -1) || pin > 5) {
+          issues.push('固定在第幾次聚會只能填 1 到 5，或 -1（當月最後一次）');
+          return;
+        }
+        if (taken.has(pin)) issues.push('有兩組固定在同一次聚會');
+        taken.add(pin);
+      });
       break;
+    }
 
     case 'max_consecutive_same_group':
       role(constraint.roleId);
@@ -649,7 +679,9 @@ function readConstraint(raw: Record<string, unknown>): ConstraintBody {
     case 'max_per_month':
       return {
         type: 'max_per_month',
-        memberId: str(raw, 'memberId'),
+        // 省略或 null ＝ 套用到每一個人
+        memberId:
+          raw.memberId === null || raw.memberId === undefined ? null : str(raw, 'memberId'),
         max: int(raw, 'max'),
         roleId: raw.roleId === null || raw.roleId === undefined ? null : str(raw, 'roleId'),
       };
@@ -693,6 +725,17 @@ function readConstraint(raw: Record<string, unknown>): ConstraintBody {
           });
         }),
         cycleBy: enumOf(raw, 'cycleBy', ['week', 'month'] as const),
+        ...(raw.pinnedSlots === undefined || raw.pinnedSlots === null
+          ? {}
+          : {
+              pinnedSlots: array(raw, 'pinnedSlots').map((pin, i) => {
+                if (pin === null) return null;
+                if (typeof pin !== 'number' || !Number.isInteger(pin)) {
+                  return fail(`pinnedSlots 第 ${i + 1} 項要是整數或 null`);
+                }
+                return pin;
+              }),
+            }),
       };
     case 'max_consecutive_same_group':
       return {

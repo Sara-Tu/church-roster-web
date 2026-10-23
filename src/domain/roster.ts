@@ -6,7 +6,16 @@
  */
 
 import { weekdayOf } from '../engine';
-import type { IsoDate, MemberId, Project, Role, RoleId, RosterResult, Week } from '../engine';
+import type {
+  BlockReason,
+  IsoDate,
+  MemberId,
+  Project,
+  Role,
+  RoleId,
+  RosterResult,
+  Week,
+} from '../engine';
 import { WEEKDAY_LABELS } from './term';
 
 /** MM/DD。跟舊 Python 版的 `_date_str` 一樣，Excel 的格子才對得上 */
@@ -86,6 +95,15 @@ export interface RosterNote {
   label: string;
   roleName: string;
   message: string;
+  /** 排不出來的警告才有：這個位置每一位有資格的人分別卡在哪裡（規格 §7.9.4） */
+  blocked: BlockedRow[];
+}
+
+export interface BlockedRow {
+  name: string;
+  reason: string;
+  /** true = 這個人其實排得上，是整個位置湊不滿才留空 */
+  servable: boolean;
 }
 
 export interface RosterView {
@@ -141,7 +159,7 @@ export function buildView(project: Project, result: RosterResult): RosterView {
     weeks,
     ...monthly(project, result),
     spread: spread(project, result),
-    warnings: warnings(result, roleById),
+    warnings: warnings(result, roleById, nameOf),
     soft: soft(result, roleById),
   };
 }
@@ -288,15 +306,25 @@ function labelOf(roleId: RoleId | null, roleById: Map<RoleId, Role>): string {
   return role === undefined ? '' : roleName(role);
 }
 
-function warnings(result: RosterResult, roleById: Map<RoleId, Role>): RosterNote[] {
+function warnings(
+  result: RosterResult,
+  roleById: Map<RoleId, Role>,
+  nameOf: Map<MemberId, string>,
+): RosterNote[] {
   const notes: RosterNote[] = [];
   for (const week of result.weeks) {
     for (const warning of week.warnings) {
+      const role = warning.roleId === null ? undefined : roleById.get(warning.roleId);
       notes.push({
         date: week.date,
         label: formatMd(week.date),
         roleName: labelOf(warning.roleId, roleById),
         message: warning.message,
+        blocked: (warning.blocked ?? []).map((entry) => ({
+          name: nameOf.get(entry.memberId) ?? entry.memberId,
+          reason: reasonText(entry.reason, roleById, role?.perWeek ?? 1),
+          servable: entry.reason === null,
+        })),
       });
     }
   }
@@ -309,7 +337,48 @@ function soft(result: RosterResult, roleById: Map<RoleId, Role>): RosterNote[] {
     label: formatMd(violation.date),
     roleName: labelOf(violation.roleId, roleById),
     message: violation.message,
+    blocked: [],
   }));
+}
+
+/** 把引擎的 BlockReason 翻成結果頁上直接看得懂的一句話（規格 §7.9.4） */
+function reasonText(
+  reason: BlockReason | null,
+  roleById: Map<RoleId, Role>,
+  perWeek: number,
+): string {
+  if (reason === null) {
+    return `排得上，但這個位置一次要 ${perWeek} 人，湊不滿所以整個留空`;
+  }
+  switch (reason.kind) {
+    case 'not_in_role':
+      return '沒有這個位置的資格';
+    case 'assigned_elsewhere':
+      return reason.roleId === null
+        ? '本週已經排在別的位置'
+        : `本週已經排在${labelOf(reason.roleId, roleById)}`;
+    case 'unavailable':
+      return '這天不行';
+    case 'outside_window':
+      return '不在可服事的日期範圍';
+    case 'max_per_month':
+      return reason.roleId === null
+        ? `每月最多 ${reason.max} 次已經用完`
+        : `${labelOf(reason.roleId, roleById)}每月最多 ${reason.max} 次已經用完`;
+    case 'max_total_per_term':
+      return `整梯次最多 ${reason.max} 次已經用完`;
+    case 'max_consecutive_weeks':
+      return `連續兩週服事已經達到上限 ${reason.max} 次`;
+    case 'max_per_term_role':
+    case 'role_frequency_total':
+      return `這個位置整梯次最多 ${reason.max} 次已經用完`;
+    case 'role_frequency_gap':
+      return `距上次排這個位置還沒滿 ${reason.minGapWeeks} 週`;
+    case 'forbidden_combination':
+      return '和本週已經排到的人有「不能同一週」的規則';
+    case 'no_partner':
+      return `排得上，但找不到可以配的${labelOf(reason.roleId, roleById)}`;
+  }
 }
 
 /**

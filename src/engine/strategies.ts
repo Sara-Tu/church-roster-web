@@ -10,13 +10,21 @@
 
 import type { EngineContext } from './context';
 import {
+  blockReason,
   canServe,
   consecutiveSameGroup,
   violatesForbiddenTogether,
   violatesRoleCombinationWithin,
 } from './eligibility';
 import { leaderKey, stableSortBy, substituteKey, termCountKey } from './ordering';
-import type { MemberId, Role, RoleId, RosterWeek } from './schema';
+import type {
+  BlockedCandidate,
+  BlockReason,
+  MemberId,
+  Role,
+  RoleId,
+  RosterWeek,
+} from './schema';
 
 export interface AssignContext {
   /** 正在填的這一週 */
@@ -54,8 +62,37 @@ function commit(
   }
 }
 
-function warn(aw: AssignContext, roleId: RoleId, code: string, message: string): void {
-  aw.week.warnings.push({ roleId, code, message });
+function warn(
+  aw: AssignContext,
+  roleId: RoleId,
+  code: string,
+  message: string,
+  blocked?: BlockedCandidate[],
+): void {
+  aw.week.warnings.push({ roleId, code, message, ...(blocked === undefined ? {} : { blocked }) });
+}
+
+/**
+ * 排不出來時，把這個位置每一位有資格的人分別卡在哪裡記下來，給結果頁的
+ * 「為什麼？」用（規格 §7.9.4）。reason 為 null 代表這個人其實排得上，
+ * 是整個位置湊不滿 perWeek 才留空。
+ */
+function blockedList(
+  ctx: EngineContext,
+  aw: AssignContext,
+  role: Role,
+  extra: readonly MemberId[] = [],
+): BlockedCandidate[] {
+  const excluded = excludedSet(ctx, aw, extra);
+  return (ctx.pools.get(role.id) ?? []).map((memberId) => ({
+    memberId,
+    reason: blockReason(ctx, memberId, role.id, aw.week.date, excluded, aw.week.assignments),
+  }));
+}
+
+/** 釘選值轉成 0 起算的「當月第幾次聚會」；-1 ＝ 當月最後一次 */
+function resolveSlot(pin: number, lastSlot: number): number {
+  return pin === -1 ? lastSlot : pin - 1;
 }
 
 function soft(
@@ -232,7 +269,13 @@ export function assignCoupled(
     if (partnerId !== null && tryPair(leaderId, partnerId)) return;
   }
 
-  warn(aw, leader.id, 'unfilled', `無法排定${leader.name}/${partner.name}`);
+  // 主角色排得上卻走到這裡，代表找不到配角
+  const blocked = blockedList(ctx, aw, leader).map((entry) =>
+    entry.reason === null
+      ? { ...entry, reason: { kind: 'no_partner', roleId: partner.id } as BlockReason }
+      : entry,
+  );
+  warn(aw, leader.id, 'unfilled', `無法排定${leader.name}/${partner.name}`, blocked);
 }
 
 function matchCoupledPair(
@@ -268,6 +311,28 @@ export function assignRotation(ctx: EngineContext, role: Role, aw: AssignContext
   const groupConsecutive = (members: readonly MemberId[]): number =>
     consecutiveSameGroup(aw.previousWeeks, role.id, members);
 
+  const slot = ctx.monthSlot.get(date) ?? 0;
+  const lastSlot = (ctx.monthCount.get(date) ?? 1) - 1;
+  const pins = rotation?.pinnedSlots ?? [];
+  /** 本週該用哪一組（釘選），沒有就是 -1 */
+  const pinnedIndex = pins.findIndex(
+    (pin) => pin !== null && resolveSlot(pin, lastSlot) === slot,
+  );
+  /** 釘選是偏好：本週該用的那一組沒用到就記一筆，不擋班表 */
+  const notePin = (usedIndex: number | null): void => {
+    if (pinnedIndex < 0 || usedIndex === pinnedIndex) return;
+    const pin = pins[pinnedIndex];
+    soft(
+      ctx,
+      aw,
+      role.id,
+      'pinned_group_missed',
+      `${role.name}第 ${pinnedIndex + 1} 組沒能排在${
+        pin === -1 ? '當月最後一次聚會' : `當月第 ${pin} 次聚會`
+      }`,
+    );
+  };
+
   const findSubstitute = (picked: readonly MemberId[]): MemberId | null => {
     const candidates = (ctx.pools.get(role.id) ?? []).filter(
       (memberId) =>
@@ -288,21 +353,32 @@ export function assignRotation(ctx: EngineContext, role: Role, aw: AssignContext
         : (ctx.monthSlot.get(date) ?? 0);
 
     const total = rotation.groups.length;
-    const rotated: MemberId[][] = [];
-    for (let i = 0; i < total; i++) rotated.push(rotation.groups[(offset + i) % total]);
+    const rotated: { members: MemberId[]; index: number }[] = [];
+    for (let i = 0; i < total; i++) {
+      const index = (offset + i) % total;
+      rotated.push({ members: rotation.groups[index], index });
+    }
+
+    // 釘在本週的組排最前、沒釘的照輪替順序、釘在別週的壓到最後。
+    // 一組都沒釘時每一組的名次都是 1，排序結果與加這個欄位之前完全相同。
+    const pinRank = (index: number): number => {
+      const pin = pins[index];
+      if (pin === null || pin === undefined) return 1;
+      return resolveSlot(pin, lastSlot) === slot ? 0 : 2;
+    };
 
     // 缺陷 #6：現有引擎只在找替補時檢查 forbidden_together，完整的組合本身不檢查
     const usable = stableSortBy(
       rotated.filter(
-        (group) =>
-          groupConsecutive(group) < maxConsecutive &&
-          !violatesForbiddenTogether(ctx, role.id, group) &&
-          !violatesRoleCombinationWithin(ctx, role.id, group),
+        ({ members }) =>
+          groupConsecutive(members) < maxConsecutive &&
+          !violatesForbiddenTogether(ctx, role.id, members) &&
+          !violatesRoleCombinationWithin(ctx, role.id, members),
       ),
-      (group) => [groupConsecutive(group)],
+      ({ members, index }) => [pinRank(index), groupConsecutive(members)],
     );
 
-    for (const group of usable) {
+    for (const { members: group, index: groupIndex } of usable) {
       const survivors: MemberId[] = [];
       for (const memberId of group) {
         if (eligible(memberId, survivors)) survivors.push(memberId);
@@ -312,6 +388,7 @@ export function assignRotation(ctx: EngineContext, role: Role, aw: AssignContext
       if (survivors.length >= role.perWeek) {
         const picked = survivors.slice(0, role.perWeek);
         commit(ctx, aw, role.id, picked);
+        notePin(groupIndex);
         reportLastResort(ctx, aw, role, picked);
         return;
       }
@@ -325,6 +402,7 @@ export function assignRotation(ctx: EngineContext, role: Role, aw: AssignContext
       if (picked.length < role.perWeek) continue;
 
       commit(ctx, aw, role.id, picked);
+      notePin(groupIndex);
       soft(
         ctx,
         aw,
@@ -346,7 +424,7 @@ export function assignRotation(ctx: EngineContext, role: Role, aw: AssignContext
   );
 
   if (candidates.length < role.perWeek) {
-    warn(aw, role.id, 'unfilled', `無法排定${role.name}（人數不足）`);
+    warn(aw, role.id, 'unfilled', `無法排定${role.name}（人數不足）`, blockedList(ctx, aw, role));
     return;
   }
 
@@ -363,6 +441,7 @@ export function assignRotation(ctx: EngineContext, role: Role, aw: AssignContext
     warn(aw, role.id, 'forbidden_pair_unavoidable', `${role.name}備用禁止配對無法迴避`);
   }
   commit(ctx, aw, role.id, picked);
+  notePin(null);
   soft(ctx, aw, role.id, 'rotation_fallback', `${role.name}沒有用到固定組合，改從人員池挑人`);
   reportLastResort(ctx, aw, role, picked);
 }
@@ -380,7 +459,7 @@ export function assignFill(ctx: EngineContext, role: Role, aw: AssignContext): v
   );
 
   if (candidates.length < role.perWeek) {
-    warn(aw, role.id, 'unfilled', `無法排定${role.name}（人數不足）`);
+    warn(aw, role.id, 'unfilled', `無法排定${role.name}（人數不足）`, blockedList(ctx, aw, role));
     return;
   }
 

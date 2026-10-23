@@ -127,7 +127,13 @@ describe('§6.4.8 全有或全無', () => {
     );
     expect(result.weeks[0].assignments.r1).toEqual([]);
     expect(result.weeks[0].warnings).toEqual([
-      { roleId: 'r1', code: 'unfilled', message: '無法排定r1（人數不足）' },
+      {
+        roleId: 'r1',
+        code: 'unfilled',
+        message: '無法排定r1（人數不足）',
+        // 排不出來的原因（規格 §7.9.4）：m1 本身排得上，是湊不滿 2 人才留空
+        blocked: [{ memberId: 'm1', reason: null }],
+      },
     ]);
   });
 });

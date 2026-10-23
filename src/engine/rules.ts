@@ -16,6 +16,8 @@ export interface RoleFrequencyRule {
 export interface RotationRule {
   groups: MemberId[][];
   cycleBy: 'week' | 'month';
+  /** 與 groups 同長度：這一組偏好的「當月第 N 次聚會」，null = 不釘（規格 §7.9.2） */
+  pinnedSlots: (number | null)[];
 }
 
 export interface SubstituteRule {
@@ -40,7 +42,8 @@ export interface RuleIndex {
   dualRoles: Map<MemberId, Set<RoleId>>;
   forbiddenCombos: ForbiddenComboEntry[][];
   requiredPairs: { a: RoleSlot; b: RoleSlot; directional: boolean }[];
-  maxPerMonth: { memberId: MemberId; roleId: RoleId | null; max: number }[];
+  /** memberId 為 null ＝ 套用到每一個人 */
+  maxPerMonth: { memberId: MemberId | null; roleId: RoleId | null; max: number }[];
   maxPerTermRole: { memberId: MemberId; roleId: RoleId; max: number }[];
   maxTotalPerTerm: { memberId: MemberId | null; max: number }[];
   windows: Map<MemberId, AvailabilityWindow[]>;
@@ -136,6 +139,8 @@ export function indexConstraints(constraints: readonly Constraint[]): RuleIndex 
           index.rotation.set(c.roleId, {
             groups: c.groups.map((group) => [...group]),
             cycleBy: c.cycleBy,
+            // 長度一律對齊 groups，少寫或多寫都不會讓引擎讀錯組
+            pinnedSlots: c.groups.map((_, i) => c.pinnedSlots?.[i] ?? null),
           });
         }
         break;

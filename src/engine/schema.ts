@@ -102,7 +102,8 @@ export type Constraint =
     })
   | (ConstraintBase & {
       type: 'max_per_month';
-      memberId: MemberId;
+      /** null = 套用到每一個人 */
+      memberId: MemberId | null;
       max: number;
       /** null = 所有角色合計 */
       roleId: RoleId | null;
@@ -132,6 +133,11 @@ export type Constraint =
       /** 依輪替順序排列 */
       groups: MemberId[][];
       cycleBy: 'week' | 'month';
+      /**
+       * 與 `groups` 同索引的偏好：這一組盡量排在當月第 N 次聚會。
+       * N 從 1 起算，-1 代表當月最後一次；null 或省略＝不釘。見規格 §7.9.2
+       */
+      pinnedSlots?: (number | null)[];
     })
   | (ConstraintBase & { type: 'max_consecutive_same_group'; roleId: RoleId; max: number })
   | (ConstraintBase & { type: 'max_consecutive_weeks_per_member'; max: number })
@@ -170,7 +176,34 @@ export interface RosterWarning {
   roleId: RoleId | null;
   code: string;
   message: string;
+  /**
+   * 排不出來時，這個位置每一位有資格的人分別卡在哪裡（規格 §7.9.4）。
+   * 只有網頁的結果頁會用，Excel 的警告工作表維持舊格式。
+   */
+  blocked?: BlockedCandidate[];
 }
+
+export interface BlockedCandidate {
+  memberId: MemberId;
+  /** null = 這個人其實可以排，是這個位置湊不滿 perWeek 才整個留空 */
+  reason: BlockReason | null;
+}
+
+/** 擋住一個人的第一個原因。順序與 eligibility.ts 的檢查順序一致 */
+export type BlockReason =
+  | { kind: 'not_in_role' }
+  | { kind: 'assigned_elsewhere'; roleId: RoleId | null }
+  | { kind: 'unavailable' }
+  | { kind: 'outside_window' }
+  | { kind: 'max_per_month'; max: number; roleId: RoleId | null }
+  | { kind: 'max_total_per_term'; max: number }
+  | { kind: 'max_consecutive_weeks'; max: number }
+  | { kind: 'max_per_term_role'; max: number }
+  | { kind: 'role_frequency_total'; max: number }
+  | { kind: 'role_frequency_gap'; minGapWeeks: number }
+  | { kind: 'forbidden_combination' }
+  /** 成對位置專用：這個人本身排得上，但找不到配角 */
+  | { kind: 'no_partner'; roleId: RoleId };
 
 export interface SoftViolation {
   date: IsoDate;
