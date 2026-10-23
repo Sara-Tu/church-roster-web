@@ -9,7 +9,7 @@
 import { describe, expect, it } from 'vitest';
 import { runScheduler } from '../src/engine';
 import type { Constraint, GoldenRoster, Project } from '../src/engine';
-import { parseConstraintsJson } from '../src/domain/constraints';
+import { isBasic, parseConstraintsJson } from '../src/domain/constraints';
 import { parseUnavailable } from '../src/domain/unavailable';
 import { createAppStore } from '../src/store/project';
 import projectJson from './fixtures/sample-project.json';
@@ -86,7 +86,11 @@ describe('從空白重建 2026H2', () => {
 
     // 「新增規則」再把欄位填好，等同在卡片上編輯
     for (const constraint of fixture.constraints) {
-      const id = store.getState().addConstraint(constraint.type);
+      // 基本規則空白專案就有了，不用新增，照著 fixture 把備註補上就好
+      const basic = store
+        .getState()
+        .project.constraints.find((item) => item.type === constraint.type && isBasic(item.type));
+      const id = basic?.id ?? store.getState().addConstraint(constraint.type);
       store.getState().updateConstraint({ ...constraint, id } as Constraint);
     }
 

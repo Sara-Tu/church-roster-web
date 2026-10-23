@@ -22,7 +22,7 @@ import { APP_VERSION } from '../version';
 import { defaultRoles, moveRole as reorderRoles } from '../domain/roles';
 import { parseNameList, toggleRole } from '../domain/members';
 import type { ParsedNames } from '../domain/members';
-import { blankConstraint } from '../domain/constraints';
+import { BASIC_TYPES, blankConstraint, isBasic } from '../domain/constraints';
 import { mergeDates, toggleDate } from '../domain/unavailable';
 import type { ImportMode, ParsedEntry } from '../domain/unavailable';
 import {
@@ -100,7 +100,6 @@ export interface AppState {
   addConstraint: (type: ConstraintType) => string;
   updateConstraint: (constraint: Constraint) => void;
   setConstraintEnabled: (id: string, enabled: boolean) => void;
-  setConstraintHard: (id: string, hard: boolean) => void;
   setConstraintNote: (id: string, note: string) => void;
   deleteConstraint: (id: string) => void;
   replaceConstraints: (constraints: readonly Constraint[]) => void;
@@ -126,6 +125,35 @@ export function today(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
+/**
+ * 補上缺少的基本規則（規格 §7.7.4）。基本規則不出現在「新增規則」裡，
+ * 使用者只能開關、不能刪，所以空白專案、匯入的檔案與進階 JSON 都要過這一關。
+ */
+export function ensureBasicConstraints(
+  constraints: readonly Constraint[],
+  counters: IdCounters,
+): { constraints: Constraint[]; counters: IdCounters } {
+  let next = counters;
+  const missing: Constraint[] = [];
+
+  for (const type of BASIC_TYPES) {
+    if (constraints.some((item) => item.type === type)) continue;
+    const taken = takeId(next, 'c');
+    next = taken.counters;
+    missing.push(blankConstraint(type, taken.id));
+  }
+
+  return { constraints: [...missing, ...constraints], counters: next };
+}
+
+function withBasics(project: Project): { project: Project; counters: IdCounters } {
+  const ensured = ensureBasicConstraints(project.constraints, initCounters(project));
+  return {
+    project: { ...project, constraints: ensured.constraints },
+    counters: ensured.counters,
+  };
+}
+
 export function createBlankProject(): Project {
   return {
     schemaVersion: SCHEMA_VERSION,
@@ -138,7 +166,8 @@ export function createBlankProject(): Project {
     ],
     roles: defaultRoles(DEFAULT_TAG_ID),
     members: [],
-    constraints: [],
+    // 基本規則一開始就在，不用使用者自己加
+    constraints: [blankConstraint('one_role_per_week', 'c1')],
     revision: 0,
   };
 }
@@ -492,8 +521,6 @@ function makeAppState(storage: StorageLike | null): StateCreator<AppState> {
       setConstraintEnabled: (id, enabled) =>
         patchConstraint(id, (item) => ({ ...item, enabled })),
 
-      setConstraintHard: (id, hard) => patchConstraint(id, (item) => ({ ...item, hard })),
-
       setConstraintNote: (id, note) =>
         patchConstraint(id, (item) => {
           const next = { ...item };
@@ -505,7 +532,10 @@ function makeAppState(storage: StorageLike | null): StateCreator<AppState> {
       deleteConstraint: (id) =>
         patchProject((current) => ({
           ...current,
-          constraints: current.constraints.filter((item) => item.id !== id),
+          // 基本規則只能停用，不能刪
+          constraints: current.constraints.filter(
+            (item) => item.id !== id || isBasic(item.type),
+          ),
         })),
 
       replaceConstraints: (constraints) =>
@@ -513,9 +543,11 @@ function makeAppState(storage: StorageLike | null): StateCreator<AppState> {
           const project = { ...state.project, constraints: [...constraints] };
           // 進階 JSON 可以自己指定 id，計數器只往前走，避免之後發出已經用過的號碼
           const scanned = initCounters(project);
+          const counters = { ...state.counters, c: Math.max(state.counters.c, scanned.c) };
+          const ensured = ensureBasicConstraints(project.constraints, counters);
           return {
-            project,
-            counters: { ...state.counters, c: Math.max(state.counters.c, scanned.c) },
+            project: { ...project, constraints: ensured.constraints },
+            counters: ensured.counters,
           };
         }),
 
@@ -529,9 +561,11 @@ function makeAppState(storage: StorageLike | null): StateCreator<AppState> {
           generated.length === weeks.length &&
           generated.every((date, i) => date === weeks[i].date);
 
+        const ensured = withBasics(incoming);
+
         commit(() => ({
-          project: incoming,
-          counters: initCounters(incoming),
+          project: ensured.project,
+          counters: ensured.counters,
           ui: {
             step: 'term',
             guideDone: true,

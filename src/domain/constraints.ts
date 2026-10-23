@@ -28,8 +28,14 @@ export interface ConstraintMeta {
   label: string;
   group: ConstraintGroup;
   hint: string;
-  /** 新增時預設是硬性還是偏好 */
+  /**
+   * 這一種規則是硬性還是偏好，由種類決定，使用者不能改。
+   * 引擎不讀 `Constraint.hard`（每一種規則怎麼用是寫死在引擎裡的），
+   * 所以這個欄位只是說明用，給卡片上的標記與匯出的 JSON 用。
+   */
   defaultHard: boolean;
+  /** 基本規則：一律存在、不能刪除，也不出現在「新增規則」裡 */
+  basic?: true;
 }
 
 export const CONSTRAINT_META: readonly ConstraintMeta[] = [
@@ -75,35 +81,36 @@ export const CONSTRAINT_META: readonly ConstraintMeta[] = [
     type: 'one_role_per_week',
     label: '每人每週只排一個位置',
     group: 'pairing',
-    hint: '整份班表通用。要開例外的人用「可以同時擔任兩個位置」另外加。',
+    hint: '基本規則，整份班表通用。要開例外的人，用「可以同時擔任兩個位置」另外加。',
     defaultHard: true,
+    basic: true,
   },
   {
     type: 'dual_role_exception',
     label: '可以同時擔任兩個位置',
     group: 'pairing',
-    hint: '上一條的例外：這個人可以在同一週同時擔任指定的幾個位置。',
+    hint: '基本規則的例外：這個人可以在同一週同時擔任指定的幾個位置。',
     defaultHard: true,
   },
   {
     type: 'forbidden_role_combination',
-    label: '不能同一週的組合',
+    label: '不能同一週服事',
     group: 'pairing',
-    hint: '指定的幾個人各自擔任指定位置時，不能出現在同一週（雙向）。',
+    hint: '這幾個人不能出現在同一週。預設不管位置，需要時才指定「只有在某些位置時才不能」。',
     defaultHard: true,
   },
   {
     type: 'required_pair',
-    label: '固定搭檔',
+    label: '固定搭檔（最優先湊成對）',
     group: 'pairing',
-    hint: 'A 擔任某個位置時，B 必須在同一週擔任某個位置。',
+    hint: '每一週最先試這一對。湊不成就照一般順序排，不會卡住班表。',
     defaultHard: true,
   },
   {
     type: 'forbidden_together',
-    label: '這幾個人不能互相搭配',
+    label: '不能同一個位置',
     group: 'pairing',
-    hint: '同一個位置上，名單裡的人任選兩個都不能同一週。',
+    hint: '這個位置一次要排兩人以上時，名單裡的人任選兩個都不能同一週。只要填一個位置加一份名單。',
     defaultHard: true,
   },
   {
@@ -115,9 +122,9 @@ export const CONSTRAINT_META: readonly ConstraintMeta[] = [
   },
   {
     type: 'preferred_role_combination',
-    label: '偏好的搭配',
+    label: '偏好的搭配（第二順位）',
     group: 'pairing',
-    hint: 'A 擔任某個位置時，盡量讓 B 擔任另一個位置。排不出來不算違規。',
+    hint: 'A 先被排到之後，才優先找 B 來配。排不出來不算違規。',
     defaultHard: false,
   },
 
@@ -153,12 +160,22 @@ export function metaOf(type: ConstraintType): ConstraintMeta {
   return meta;
 }
 
+export function isBasic(type: ConstraintType): boolean {
+  return metaOf(type).basic === true;
+}
+
+/** 基本規則一律存在，不用新增也不能刪，所以不列進「新增規則」 */
 export function groupedMeta(): { group: ConstraintGroup; items: ConstraintMeta[] }[] {
   return (['limits', 'pairing', 'rotation'] as const).map((group) => ({
     group,
-    items: CONSTRAINT_META.filter((meta) => meta.group === group),
+    items: CONSTRAINT_META.filter((meta) => meta.group === group && meta.basic !== true),
   }));
 }
+
+/** 每一份專案都要有的基本規則。缺哪一條就補哪一條（store 的 ensureBasic 用） */
+export const BASIC_TYPES: readonly ConstraintType[] = CONSTRAINT_META.filter(
+  (meta) => meta.basic === true,
+).map((meta) => meta.type);
 
 // ── 空白樣板 ──────────────────────────────────────────────────────────────
 
@@ -263,11 +280,14 @@ export function describeConstraint(project: Project, constraint: Constraint): st
 
     case 'forbidden_role_combination':
       return `${constraint.entries
-        .map(
-          (entry) =>
-            `${memberName(project, entry.memberId)}（${roleNames(project, entry.roleIds, '／')}）`,
-        )
-        .join(' 與 ')} 不能同一週`;
+        .map((entry) => {
+          const who = memberName(project, entry.memberId);
+          // 空陣列＝不限位置，就不用在名字後面掛括號
+          return entry.roleIds.length === 0
+            ? who
+            : `${who}（${roleNames(project, entry.roleIds, '／')}）`;
+        })
+        .join(' 與 ')} 不能同一週服事`;
 
     case 'required_pair':
       return `${slotText(project, constraint.a)} 時，${slotText(project, constraint.b)} 必須同一週${
@@ -383,10 +403,10 @@ export function validateConstraint(project: Project, constraint: Constraint): st
       break;
 
     case 'forbidden_role_combination':
+      // 位置是選填的：留空就是不限位置，不算沒填完
       if (constraint.entries.length < 2) issues.push('至少要有兩個人');
       constraint.entries.forEach((entry) => {
         member(entry.memberId);
-        if (entry.roleIds.length === 0) issues.push('每個人都要選至少一個位置');
         entry.roleIds.forEach((id) => role(id));
       });
       break;
@@ -570,7 +590,8 @@ export function parseConstraintsJson(text: string, project: Project): ParsedCons
       const constraint = {
         ...body,
         id,
-        hard: typeof raw.hard === 'boolean' ? raw.hard : metaOf(body.type).defaultHard,
+        // hard 由種類決定，檔案裡寫什麼都不算數（引擎本來就不讀它）
+        hard: metaOf(body.type).defaultHard,
         enabled: typeof raw.enabled === 'boolean' ? raw.enabled : true,
         ...(typeof raw.note === 'string' ? { note: raw.note } : {}),
       } as Constraint;
@@ -611,7 +632,11 @@ function readConstraint(raw: Record<string, unknown>): ConstraintBody {
         type: 'forbidden_role_combination',
         entries: array(raw, 'entries').map((entry, i) => {
           if (!isRecord(entry)) return fail(`entries 第 ${i + 1} 筆不是物件`);
-          return { memberId: str(entry, 'memberId'), roleIds: strArray(entry, 'roleIds') };
+          return {
+            memberId: str(entry, 'memberId'),
+            // 省略或空陣列都是「不限位置」
+            roleIds: entry.roleIds === undefined ? [] : strArray(entry, 'roleIds'),
+          };
         }),
       };
     case 'required_pair':

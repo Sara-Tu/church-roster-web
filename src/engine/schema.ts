@@ -90,6 +90,7 @@ export type Constraint =
   | (ConstraintBase & { type: 'dual_role_exception'; memberId: MemberId; roleIds: RoleId[] })
   | (ConstraintBase & {
       type: 'forbidden_role_combination';
+      /** roleIds 是空陣列代表「不限位置」：這個人排到哪個位置都算數 */
       entries: { memberId: MemberId; roleIds: RoleId[] }[];
     })
   | (ConstraintBase & {

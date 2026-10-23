@@ -4,7 +4,7 @@ import { useState } from 'react';
 import type { Role, RoleId } from '../engine';
 import { candidateCount, pairOptions } from '../domain/roles';
 import { roleRemovalImpact, useAppStore } from '../store/project';
-import { Button, Card, ConfirmDialog, Empty, IconButton, INPUT_CLASS } from './parts';
+import { Button, Card, ConfirmDialog, Empty, HEAD_CELL, INPUT_CLASS, IconButton, StickyTable } from './parts';
 
 export function StepRoles() {
   const project = useAppStore((state) => state.project);
@@ -24,16 +24,15 @@ export function StepRoles() {
         {project.roles.length === 0 ? (
           <Empty>還沒有服事位置。按下方的「新增位置」開始。</Empty>
         ) : (
-          <div className="overflow-x-auto rounded-lg border border-neutral-200">
-            <table className="w-full min-w-[760px] text-sm">
-              <thead className="bg-brand text-left text-white">
+          <StickyTable className="w-full min-w-[760px]">
+              <thead>
                 <tr>
-                  <th className="px-4 py-2 font-medium">名稱</th>
-                  <th className="px-4 py-2 font-medium">每週人數</th>
-                  <th className="px-4 py-2 font-medium">只在{tag?.label ?? '特殊週'}</th>
-                  <th className="px-4 py-2 font-medium">一起排</th>
-                  <th className="px-4 py-2 font-medium">可擔任人數</th>
-                  <th className="px-4 py-2" />
+                  <th className={`${HEAD_CELL} px-4 py-2 text-left`}>名稱</th>
+                  <th className={`${HEAD_CELL} px-4 py-2 text-left`}>每週人數</th>
+                  <th className={`${HEAD_CELL} px-4 py-2 text-left`}>只在{tag?.label ?? '特殊週'}</th>
+                  <th className={`${HEAD_CELL} px-4 py-2 text-left`}>一起排</th>
+                  <th className={`${HEAD_CELL} px-4 py-2 text-left`}>可擔任人數</th>
+                  <th className={`${HEAD_CELL} px-4 py-2 text-left`} />
                 </tr>
               </thead>
               <tbody>
@@ -41,8 +40,7 @@ export function StepRoles() {
                   <RoleRow key={role.id} role={role} index={index} onDelete={setPending} />
                 ))}
               </tbody>
-            </table>
-          </div>
+          </StickyTable>
         )}
 
         <div className="mt-4">

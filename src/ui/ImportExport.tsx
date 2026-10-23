@@ -4,6 +4,7 @@ import { useRef, useState } from 'react';
 import type { Project } from '../engine';
 import { downloadText } from '../io/download';
 import { projectFilename, readProject, serializeProject, summarize } from '../io/projectFile';
+import { isBasic } from '../domain/constraints';
 import { browserStorage, readBackup } from '../store/persist';
 import { today, useAppStore } from '../store/project';
 import { Button } from './parts';
@@ -132,6 +133,12 @@ function ImportPanel({ onClose }: { onClose: () => void }) {
             <dt className="text-ink-muted">限制條件</dt>
             <dd className="tabular">{summary.constraints} 條</dd>
           </dl>
+        )}
+
+        {incoming !== null && !incoming.constraints.some((item) => isBasic(item.type)) && (
+          <p className="mt-2 text-xs text-ink-muted">
+            這份檔案沒有「每人每週只排一個位置」這條基本規則，匯入後會自動補上。
+          </p>
         )}
 
         {backupKey !== null && (

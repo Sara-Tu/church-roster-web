@@ -2,12 +2,14 @@
 
 import { describe, expect, it } from 'vitest';
 import {
+  BASIC_TYPES,
   blankConstraint,
   CONSTRAINT_META,
   constraintsToJson,
   describeConstraint,
   groupedMeta,
   invalidConstraintCount,
+  isBasic,
   metaOf,
   parseConstraintsJson,
   validateConstraint,
@@ -36,8 +38,16 @@ describe('CONSTRAINT_META', () => {
     expect(ALL_TYPES).toHaveLength(15);
     expect(new Set(ALL_TYPES).size).toBe(15);
     const grouped = groupedMeta();
-    expect(grouped.flatMap((entry) => entry.items)).toHaveLength(15);
     expect(grouped.map((entry) => entry.group)).toEqual(['limits', 'pairing', 'rotation']);
+  });
+
+  it('基本規則不出現在「新增規則」裡', () => {
+    const items = groupedMeta().flatMap((entry) => entry.items);
+    expect(items).toHaveLength(14);
+    expect(items.map((meta) => meta.type)).not.toContain('one_role_per_week');
+    expect(BASIC_TYPES).toEqual(['one_role_per_week']);
+    expect(isBasic('one_role_per_week')).toBe(true);
+    expect(isBasic('dual_role_exception')).toBe(false);
   });
 
   it('輪替、替補、偏好搭配預設是偏好規則，其他是硬性', () => {
@@ -135,6 +145,109 @@ describe('describeConstraint', () => {
       expect(describeConstraint(fixture, constraint)).not.toBe('');
     }
     expect(new Set(fixture.constraints.map((c) => c.type)).size).toBe(15);
+  });
+});
+
+describe('不能同一週服事：位置是選填的', () => {
+  const project = base();
+
+  it('位置留空時，摘要就只寫名字', () => {
+    expect(
+      describeConstraint(
+        project,
+        rule({
+          type: 'forbidden_role_combination',
+          entries: [
+            { memberId: 'm1', roleIds: [] },
+            { memberId: 'm2', roleIds: [] },
+          ],
+        }),
+      ),
+    ).toBe('小明 與 小華 不能同一週服事');
+  });
+
+  it('指定位置時照樣掛在名字後面', () => {
+    expect(
+      describeConstraint(
+        project,
+        rule({
+          type: 'forbidden_role_combination',
+          entries: [
+            { memberId: 'm1', roleIds: ['r1', 'r2'] },
+            { memberId: 'm2', roleIds: [] },
+          ],
+        }),
+      ),
+    ).toBe('小明（r1／r2） 與 小華 不能同一週服事');
+  });
+
+  it('位置留空不算沒填完，人沒選才算', () => {
+    expect(
+      validateConstraint(
+        project,
+        rule({
+          type: 'forbidden_role_combination',
+          entries: [
+            { memberId: 'm1', roleIds: [] },
+            { memberId: 'm2', roleIds: [] },
+          ],
+        }),
+      ),
+    ).toEqual([]);
+    expect(
+      validateConstraint(
+        project,
+        rule({
+          type: 'forbidden_role_combination',
+          entries: [
+            { memberId: '', roleIds: [] },
+            { memberId: 'm2', roleIds: [] },
+          ],
+        }),
+      ),
+    ).toEqual(['還沒選人']);
+  });
+
+  it('JSON 裡整個省略 roleIds 也讀得進來', () => {
+    const parsed = parseConstraintsJson(
+      JSON.stringify([
+        {
+          type: 'forbidden_role_combination',
+          entries: [{ memberId: 'm1' }, { memberId: 'm2' }],
+        },
+      ]),
+      project,
+    );
+    expect(parsed.ok).toBe(true);
+    if (parsed.ok) {
+      expect(parsed.constraints[0]).toMatchObject({
+        entries: [
+          { memberId: 'm1', roleIds: [] },
+          { memberId: 'm2', roleIds: [] },
+        ],
+      });
+    }
+  });
+});
+
+describe('硬性／偏好由種類決定', () => {
+  it('JSON 裡寫什麼都不算數', () => {
+    const parsed = parseConstraintsJson(
+      JSON.stringify([
+        { type: 'one_role_per_week', hard: false },
+        { type: 'preferred_role_combination', hard: true, when: { memberId: 'm1', roleId: 'r1' }, prefer: { memberId: 'm2', roleId: 'r2' } },
+      ]),
+      base(),
+    );
+    expect(parsed.ok).toBe(true);
+    if (parsed.ok) {
+      expect(parsed.constraints.map((item) => item.hard)).toEqual([true, false]);
+    }
+  });
+
+  it('樣板也一樣照種類來', () => {
+    expect(blankConstraint('required_pair', 'c1').hard).toBe(true);
+    expect(blankConstraint('preferred_role_combination', 'c1').hard).toBe(false);
   });
 });
 

@@ -9,7 +9,12 @@
  */
 
 import type { EngineContext } from './context';
-import { canServe, consecutiveSameGroup, violatesForbiddenTogether } from './eligibility';
+import {
+  canServe,
+  consecutiveSameGroup,
+  violatesForbiddenTogether,
+  violatesRoleCombinationWithin,
+} from './eligibility';
 import { leaderKey, stableSortBy, substituteKey, termCountKey } from './ordering';
 import type { MemberId, Role, RoleId, RosterWeek } from './schema';
 
@@ -269,6 +274,7 @@ export function assignRotation(ctx: EngineContext, role: Role, aw: AssignContext
         !picked.includes(memberId) &&
         eligible(memberId, picked) &&
         !violatesForbiddenTogether(ctx, role.id, [...picked, memberId]) &&
+        !violatesRoleCombinationWithin(ctx, role.id, [...picked, memberId]) &&
         groupConsecutive([...picked, memberId]) < maxConsecutive,
     );
     return stableSortBy(candidates, substituteKey(ctx, role.id, date))[0] ?? null;
@@ -290,7 +296,8 @@ export function assignRotation(ctx: EngineContext, role: Role, aw: AssignContext
       rotated.filter(
         (group) =>
           groupConsecutive(group) < maxConsecutive &&
-          !violatesForbiddenTogether(ctx, role.id, group),
+          !violatesForbiddenTogether(ctx, role.id, group) &&
+          !violatesRoleCombinationWithin(ctx, role.id, group),
       ),
       (group) => [groupConsecutive(group)],
     );
@@ -346,7 +353,9 @@ export function assignRotation(ctx: EngineContext, role: Role, aw: AssignContext
   const combination = pickCombination(
     candidates,
     role.perWeek,
-    (picked, next) => !violatesForbiddenTogether(ctx, role.id, [...picked, next]),
+    (picked, next) =>
+      !violatesForbiddenTogether(ctx, role.id, [...picked, next]) &&
+      !violatesRoleCombinationWithin(ctx, role.id, [...picked, next]),
   );
 
   const picked = combination ?? candidates.slice(0, role.perWeek);
@@ -375,7 +384,19 @@ export function assignFill(ctx: EngineContext, role: Role, aw: AssignContext): v
     return;
   }
 
-  const picked = candidates.slice(0, role.perWeek);
+  // 這裡的人選也是一次挑完的，所以組合本身要查過才算數（規格 §7.7.3）
+  const combination = pickCombination(
+    candidates,
+    role.perWeek,
+    (chosen, next) =>
+      !violatesForbiddenTogether(ctx, role.id, [...chosen, next]) &&
+      !violatesRoleCombinationWithin(ctx, role.id, [...chosen, next]),
+  );
+
+  const picked = combination ?? candidates.slice(0, role.perWeek);
+  if (combination === null) {
+    warn(aw, role.id, 'forbidden_pair_unavoidable', `${role.name}的禁止配對無法迴避`);
+  }
   commit(ctx, aw, role.id, picked);
   reportLastResort(ctx, aw, role, picked);
 }

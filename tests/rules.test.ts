@@ -85,6 +85,48 @@ describe('3. forbidden_role_combination', () => {
     const result = runScheduler(makeProject(parts));
     expect(result.weeks[0].assignments).toEqual({ r1: ['m1'], r2: ['m2'] });
   });
+
+  it('不限位置：roleIds 留空時，對方被排到任何位置都算數', () => {
+    const result = runScheduler(
+      makeProject({
+        roles: [role('r1'), role('r2')],
+        members: [member('m1', ['r1']), member('m2', ['r1', 'r2']), member('m3', ['r2'])],
+        weeks: weeks(1),
+        constraints: [
+          rule({
+            type: 'forbidden_role_combination',
+            entries: [
+              { memberId: 'm1', roleIds: [] },
+              { memberId: 'm2', roleIds: [] },
+            ],
+          }),
+        ],
+      }),
+    );
+    // m1 先佔走 r1，m2 就整週都不能上，r2 換 m3
+    expect(result.weeks[0].assignments).toEqual({ r1: ['m1'], r2: ['m3'] });
+  });
+
+  it('同一個位置一次排兩人時，那一批人選彼此之間也會查', () => {
+    const result = runScheduler(
+      makeProject({
+        roles: [role('r1', { perWeek: 2 })],
+        members: [member('m1', ['r1']), member('m2', ['r1']), member('m3', ['r1'])],
+        weeks: weeks(1),
+        constraints: [
+          rule({
+            type: 'forbidden_role_combination',
+            entries: [
+              { memberId: 'm1', roleIds: [] },
+              { memberId: 'm2', roleIds: ['r1'] },
+            ],
+          }),
+        ],
+      }),
+    );
+    // 兩個人是一起選出來的，weekAssignments 當下還是空的，所以要靠同批檢查才擋得住
+    expect(result.weeks[0].assignments.r1).toEqual(['m1', 'm3']);
+  });
 });
 
 describe('4. required_pair', () => {

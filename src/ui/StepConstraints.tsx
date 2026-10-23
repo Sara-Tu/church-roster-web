@@ -1,4 +1,4 @@
-/** 步驟 5：限制條件。規格 §7.2 步驟 5、§7.6.4 */
+/** 步驟 5：限制條件。規格 §7.2 步驟 5、§7.6.4、§7.7.4 */
 
 import { useState } from 'react';
 import type { Constraint, ConstraintType } from '../engine';
@@ -7,6 +7,7 @@ import {
   describeConstraint,
   GROUP_LABELS,
   groupedMeta,
+  isBasic,
   metaOf,
   parseConstraintsJson,
   validateConstraint,
@@ -16,6 +17,9 @@ import { useAppStore } from '../store/project';
 import { ConstraintEditor } from './ConstraintEditor';
 import { Button, Card, ConfirmDialog, Empty, INPUT_CLASS } from './parts';
 
+const HARD_TITLE = '這種規則一定是硬性的：違反就不排';
+const SOFT_TITLE = '這種規則一定是偏好：排不出來只會在警告裡記一筆';
+
 export function StepConstraints() {
   const project = useAppStore((state) => state.project);
   const addConstraint = useAppStore((state) => state.addConstraint);
@@ -23,7 +27,9 @@ export function StepConstraints() {
   const [expanded, setExpanded] = useState<string | null>(null);
   const [pending, setPending] = useState<Constraint | null>(null);
 
-  const active = project.constraints.filter((constraint) => constraint.enabled).length;
+  const basics = project.constraints.filter((constraint) => isBasic(constraint.type));
+  const rest = project.constraints.filter((constraint) => !isBasic(constraint.type));
+  const active = rest.filter((constraint) => constraint.enabled).length;
 
   const add = (type: ConstraintType) => {
     setExpanded(addConstraint(type));
@@ -32,18 +38,46 @@ export function StepConstraints() {
   return (
     <div className="flex flex-col gap-6">
       <Card
+        title="基本規則"
+        hint="一律套用，不能刪除。除非你的教會真的需要同一個人在同一週身兼兩職，否則這裡不用動。"
+      >
+        <ul className="flex flex-col gap-2">
+          {basics.map((constraint) => (
+            <li
+              key={constraint.id}
+              className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-neutral-200 px-4 py-3"
+            >
+              <span className={`text-sm ${constraint.enabled ? '' : 'text-ink-muted'}`}>
+                {describeConstraint(project, constraint)}
+              </span>
+              <label className="flex items-center gap-1 text-xs text-ink-muted">
+                <input
+                  type="checkbox"
+                  checked={constraint.enabled}
+                  onChange={(event) =>
+                    useAppStore.getState().setConstraintEnabled(constraint.id, event.target.checked)
+                  }
+                />
+                生效
+              </label>
+            </li>
+          ))}
+        </ul>
+      </Card>
+
+      <Card
         title="限制條件"
         hint={
-          project.constraints.length === 0
+          rest.length === 0
             ? '這一步可以跳過，之後隨時回來加。'
-            : `共 ${project.constraints.length} 條，其中 ${active} 條生效中。`
+            : `共 ${rest.length} 條，其中 ${active} 條生效中。`
         }
       >
-        {project.constraints.length === 0 ? (
-          <Empty>還沒有任何規則。從下面的「新增規則」挑一種加進來。</Empty>
+        {rest.length === 0 ? (
+          <Empty>還沒有自己加的規則。從下面的「新增規則」挑一種加進來。</Empty>
         ) : (
           <ul className="flex flex-col gap-3">
-            {project.constraints.map((constraint) => (
+            {rest.map((constraint) => (
               <ConstraintCard
                 key={constraint.id}
                 constraint={constraint}
@@ -59,15 +93,25 @@ export function StepConstraints() {
       </Card>
 
       <Card title="新增規則" hint="挑一種加進來，欄位留空的地方會標紅字提醒。">
-        <div className="flex flex-col gap-4">
+        <div className="flex flex-col gap-5">
           {groupedMeta().map(({ group, items }) => (
             <div key={group}>
               <h3 className="mb-2 text-sm font-medium text-ink-muted">{GROUP_LABELS[group]}</h3>
-              <div className="flex flex-wrap gap-2">
+              <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
                 {items.map((meta) => (
-                  <Button key={meta.type} title={meta.hint} onClick={() => add(meta.type)}>
-                    ＋ {meta.label}
-                  </Button>
+                  <button
+                    key={meta.type}
+                    type="button"
+                    className="rounded-lg border border-neutral-200 px-3 py-2 text-left hover:border-brand-light hover:bg-brand-light/10"
+                    onClick={() => add(meta.type)}
+                  >
+                    <span className="flex items-center justify-between gap-2">
+                      <span className="text-sm font-medium">{meta.label}</span>
+                      <span className="text-xs text-ink-muted">＋</span>
+                    </span>
+                    {/* 說明直接寫在按鈕上：選規則的當下才是會搞混的時機 */}
+                    <span className="mt-1 block text-xs text-ink-muted">{meta.hint}</span>
+                  </button>
                 ))}
               </div>
             </div>
@@ -106,7 +150,6 @@ function ConstraintCard({
   const project = useAppStore((state) => state.project);
   const updateConstraint = useAppStore((state) => state.updateConstraint);
   const setConstraintEnabled = useAppStore((state) => state.setConstraintEnabled);
-  const setConstraintHard = useAppStore((state) => state.setConstraintHard);
   const setConstraintNote = useAppStore((state) => state.setConstraintNote);
 
   const meta = metaOf(constraint.type);
@@ -131,8 +174,10 @@ function ConstraintCard({
         </div>
 
         <div className="flex items-center gap-2">
+          {/* 硬性／偏好由種類決定，不給改：引擎本來就不讀這個欄位 */}
           <span
-            className={`rounded-full px-2 py-0.5 text-xs ${
+            title={constraint.hard ? HARD_TITLE : SOFT_TITLE}
+            className={`cursor-help rounded-full px-2 py-0.5 text-xs ${
               constraint.hard ? 'bg-brand text-white' : 'bg-stripe text-ink-muted'
             }`}
           >
@@ -155,33 +200,20 @@ function ConstraintCard({
 
       {open && (
         <div className="mt-4 flex flex-col gap-3 border-t border-neutral-200 pt-4">
-          <p className="text-xs text-ink-muted">{meta.hint}</p>
+          <p className="text-xs text-ink-muted">
+            {meta.hint}（{constraint.hard ? HARD_TITLE : SOFT_TITLE}）
+          </p>
           <ConstraintEditor constraint={constraint} onChange={updateConstraint} />
 
-          <div className="flex flex-col gap-3 border-t border-neutral-200 pt-3 sm:flex-row sm:items-center">
-            <label className="flex items-center gap-2 text-sm">
-              <span className="font-medium">種類</span>
-              <select
-                className={INPUT_CLASS}
-                value={constraint.hard ? 'hard' : 'soft'}
-                onChange={(event) =>
-                  setConstraintHard(constraint.id, event.target.value === 'hard')
-                }
-              >
-                <option value="hard">硬性（違反就不排）</option>
-                <option value="soft">偏好（排不出來就記一筆）</option>
-              </select>
-            </label>
-            <label className="flex grow items-center gap-2 text-sm">
-              <span className="font-medium">備註</span>
-              <input
-                className={`${INPUT_CLASS} grow`}
-                value={constraint.note ?? ''}
-                placeholder="寫給自己看的說明，可以空白"
-                onChange={(event) => setConstraintNote(constraint.id, event.target.value)}
-              />
-            </label>
-          </div>
+          <label className="flex items-center gap-2 border-t border-neutral-200 pt-3 text-sm">
+            <span className="font-medium">備註</span>
+            <input
+              className={`${INPUT_CLASS} grow`}
+              value={constraint.note ?? ''}
+              placeholder="寫給自己看的說明，可以空白"
+              onChange={(event) => setConstraintNote(constraint.id, event.target.value)}
+            />
+          </label>
         </div>
       )}
     </li>

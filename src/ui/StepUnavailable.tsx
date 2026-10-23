@@ -9,7 +9,16 @@ import {
 } from '../domain/unavailable';
 import type { ImportMode, ParsedUnavailable } from '../domain/unavailable';
 import { useAppStore } from '../store/project';
-import { Button, Card, ConfirmDialog, Empty, IconButton, INPUT_CLASS } from './parts';
+import {
+  Button,
+  Card,
+  ConfirmDialog,
+  Empty,
+  HEAD_CELL,
+  IconButton,
+  INPUT_CLASS,
+  StickyTable,
+} from './parts';
 
 export function StepUnavailable() {
   const project = useAppStore((state) => state.project);
@@ -363,13 +372,12 @@ function LoadCard() {
           : `有 ${shortWeeks} 週排不滿，下面標橘色。這裡只扣不行日期，不計算限制條件。`
       }
     >
-      <div className="overflow-x-auto rounded-lg border border-neutral-200">
-        <table className="w-full min-w-[520px] text-sm">
-          <thead className="bg-brand text-left text-white">
+      <StickyTable className="w-full min-w-[520px]">
+          <thead>
             <tr>
-              <th className="px-4 py-2 font-medium">聚會日</th>
-              <th className="px-3 py-2 font-medium">不行人數</th>
-              <th className="px-3 py-2 font-medium">排不滿的位置</th>
+              <th className={`${HEAD_CELL} px-4 py-2 text-left`}>聚會日</th>
+              <th className={`${HEAD_CELL} px-3 py-2 text-left`}>不行人數</th>
+              <th className={`${HEAD_CELL} px-3 py-2 text-left`}>排不滿的位置</th>
             </tr>
           </thead>
           <tbody>
@@ -401,8 +409,7 @@ function LoadCard() {
               );
             })}
           </tbody>
-        </table>
-      </div>
+      </StickyTable>
     </Card>
   );
 }

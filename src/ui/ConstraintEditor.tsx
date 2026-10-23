@@ -1,5 +1,6 @@
 /** 15 種限制條件的欄位編輯器。規格 §5、§7.6.4 */
 
+import { useState } from 'react';
 import type { Constraint, RoleSlot } from '../engine';
 import { Button, IconButton, INPUT_CLASS } from './parts';
 import { EditorRow, MemberChips, MemberPicker, NumberInput, RoleChips, RolePicker } from './pickers';
@@ -38,61 +39,7 @@ export function ConstraintEditor({
       );
 
     case 'forbidden_role_combination':
-      return (
-        <>
-          {constraint.entries.map((entry, index) => (
-            <EditorRow key={index} title={`第 ${index + 1} 個人`}>
-              <MemberPicker
-                value={entry.memberId === '' ? null : entry.memberId}
-                onChange={(value) =>
-                  onChange({
-                    ...constraint,
-                    entries: constraint.entries.map((item, i) =>
-                      i === index ? { ...item, memberId: value ?? '' } : item,
-                    ),
-                  })
-                }
-              />
-              <RoleChips
-                selected={entry.roleIds}
-                onChange={(roleIds) =>
-                  onChange({
-                    ...constraint,
-                    entries: constraint.entries.map((item, i) =>
-                      i === index ? { ...item, roleIds } : item,
-                    ),
-                  })
-                }
-              />
-              {constraint.entries.length > 2 && (
-                <IconButton
-                  label="移除這個人"
-                  onClick={() =>
-                    onChange({
-                      ...constraint,
-                      entries: constraint.entries.filter((_, i) => i !== index),
-                    })
-                  }
-                >
-                  刪除
-                </IconButton>
-              )}
-            </EditorRow>
-          ))}
-          <div>
-            <Button
-              onClick={() =>
-                onChange({
-                  ...constraint,
-                  entries: [...constraint.entries, { memberId: '', roleIds: [] }],
-                })
-              }
-            >
-              再加一個人
-            </Button>
-          </div>
-        </>
-      );
+      return <ComboEntries constraint={constraint} onChange={onChange} />;
 
     case 'required_pair':
       return (
@@ -459,4 +406,91 @@ function move<T>(items: readonly T[], index: number, delta: number): T[] {
   const next = [...items];
   [next[index], next[target]] = [next[target], next[index]];
   return next;
+}
+
+/**
+ * 「不能同一週服事」的人員清單。位置是選填的：留空＝不限位置（規格 §7.7.3）。
+ * 選了「指定位置」但還沒挑的那幾列要記下來，否則 select 會自己跳回「不限位置」。
+ */
+function ComboEntries({
+  constraint,
+  onChange,
+}: {
+  constraint: Extract<Constraint, { type: 'forbidden_role_combination' }>;
+  onChange: (next: Constraint) => void;
+}) {
+  const [picking, setPicking] = useState<ReadonlySet<number>>(new Set());
+
+  const patchEntry = (index: number, patch: Partial<{ memberId: string; roleIds: string[] }>) =>
+    onChange({
+      ...constraint,
+      entries: constraint.entries.map((item, i) => (i === index ? { ...item, ...patch } : item)),
+    });
+
+  const setPicked = (index: number, on: boolean) => {
+    const next = new Set(picking);
+    if (on) next.add(index);
+    else next.delete(index);
+    setPicking(next);
+  };
+
+  return (
+    <>
+      {constraint.entries.map((entry, index) => {
+        const specific = entry.roleIds.length > 0 || picking.has(index);
+        return (
+          <EditorRow key={index} title={`第 ${index + 1} 個人`}>
+            <MemberPicker
+              value={entry.memberId === '' ? null : entry.memberId}
+              onChange={(value) => patchEntry(index, { memberId: value ?? '' })}
+            />
+            <select
+              className={INPUT_CLASS}
+              value={specific ? 'some' : 'any'}
+              onChange={(event) => {
+                const next = event.target.value === 'some';
+                setPicked(index, next);
+                if (!next) patchEntry(index, { roleIds: [] });
+              }}
+              aria-label="位置範圍"
+            >
+              <option value="any">不限位置</option>
+              <option value="some">只有這些位置</option>
+            </select>
+            {specific && (
+              <RoleChips
+                selected={entry.roleIds}
+                onChange={(roleIds) => patchEntry(index, { roleIds })}
+              />
+            )}
+            {constraint.entries.length > 2 && (
+              <IconButton
+                label="移除這個人"
+                onClick={() =>
+                  onChange({
+                    ...constraint,
+                    entries: constraint.entries.filter((_, i) => i !== index),
+                  })
+                }
+              >
+                刪除
+              </IconButton>
+            )}
+          </EditorRow>
+        );
+      })}
+      <div>
+        <Button
+          onClick={() =>
+            onChange({
+              ...constraint,
+              entries: [...constraint.entries, { memberId: '', roleIds: [] }],
+            })
+          }
+        >
+          再加一個人
+        </Button>
+      </div>
+    </>
+  );
 }

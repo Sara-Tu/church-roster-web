@@ -3,7 +3,19 @@
 import { useState } from 'react';
 import type { Member } from '../engine';
 import { membersRemovalImpact, useAppStore } from '../store/project';
-import { Button, Card, ConfirmDialog, Empty, IconButton, INPUT_CLASS } from './parts';
+import {
+  Button,
+  Card,
+  ConfirmDialog,
+  Empty,
+  HEAD_CELL,
+  IconButton,
+  INPUT_CLASS,
+  StickyTable,
+} from './parts';
+
+/** 同時釘在上面與左邊的角落格，z 要比只釘一邊的高 */
+const CORNER_CELL = 'sticky left-0 top-14 z-20 bg-brand font-medium text-white';
 
 /** 要刪掉哪些人：單筆（從某一列按刪除）、勾選的那批、或全部 */
 type Pending = { kind: 'one'; member: Member } | { kind: 'selected' } | { kind: 'all' };
@@ -112,11 +124,10 @@ export function StepMembers() {
               )}
             </div>
 
-            <div className="overflow-x-auto rounded-lg border border-neutral-200">
-              <table className="w-full min-w-[680px] text-sm">
-                <thead className="bg-brand text-left text-white">
+            <StickyTable className="w-full min-w-[680px]">
+                <thead>
                   <tr>
-                    <th className="w-10 px-3 py-2">
+                    <th className={`${CORNER_CELL} w-10 px-3 py-2`}>
                       <input
                         type="checkbox"
                         checked={allSelected}
@@ -135,14 +146,14 @@ export function StepMembers() {
                         aria-label="全選"
                       />
                     </th>
-                    <th className="px-4 py-2 font-medium">姓名</th>
+                    <th className={`${CORNER_CELL} left-10 px-4 py-2 text-left`}>姓名</th>
                     {project.roles.map((role) => (
-                      <th key={role.id} className="px-3 py-2 text-center font-medium">
+                      <th key={role.id} className={`${HEAD_CELL} px-3 py-2 text-center`}>
                         {role.name === '' ? '（未命名）' : role.name}
                       </th>
                     ))}
-                    <th className="px-3 py-2 text-center font-medium">已勾</th>
-                    <th className="px-4 py-2" />
+                    <th className={`${HEAD_CELL} px-3 py-2 text-center`}>已勾</th>
+                    <th className={`${HEAD_CELL} px-4 py-2`} />
                   </tr>
                 </thead>
                 <tbody>
@@ -157,8 +168,7 @@ export function StepMembers() {
                     />
                   ))}
                 </tbody>
-              </table>
-            </div>
+            </StickyTable>
           </>
         )}
 
@@ -215,14 +225,12 @@ function MemberRow({
   const setMemberRole = useAppStore((state) => state.setMemberRole);
 
   const idle = member.roles.length === 0;
+  // 釘住的兩欄會蓋在其他欄上面，所以底色要重複下在格子上，不能只下在列上
+  const rowBg = selected ? 'bg-brand-light/10' : index % 2 === 1 ? 'bg-stripe' : 'bg-white';
 
   return (
-    <tr
-      className={`${selected ? 'bg-brand-light/10' : index % 2 === 1 ? 'bg-stripe' : ''} ${
-        idle ? 'text-ink-muted' : ''
-      }`}
-    >
-      <td className="px-3 py-2">
+    <tr className={`${rowBg} ${idle ? 'text-ink-muted' : ''}`}>
+      <td className={`sticky left-0 z-10 px-3 py-2 ${rowBg}`}>
         <input
           type="checkbox"
           checked={selected}
@@ -230,7 +238,7 @@ function MemberRow({
           aria-label={`勾選 ${member.name || '未命名人員'}`}
         />
       </td>
-      <td className="px-4 py-2">
+      <td className={`sticky left-10 z-10 px-4 py-2 ${rowBg}`}>
         <input
           className={`${INPUT_CLASS} w-32`}
           value={member.name}

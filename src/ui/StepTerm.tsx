@@ -10,7 +10,7 @@ import {
   WEEKDAY_LABELS,
 } from '../domain/term';
 import { useAppStore } from '../store/project';
-import { Button, Card, ConfirmDialog, Empty, Field, IconButton, INPUT_CLASS } from './parts';
+import { Button, Card, ConfirmDialog, Empty, Field, HEAD_CELL, INPUT_CLASS, IconButton, StickyTable } from './parts';
 
 const RULE_OPTIONS = [
   { value: '', label: '不設定（自己逐週勾）' },
@@ -174,14 +174,13 @@ export function StepTerm() {
         {weeks.length === 0 ? (
           <Empty>還沒有聚會日。填好上面的起訖日期後按「產生聚會日」。</Empty>
         ) : (
-          <div className="overflow-hidden rounded-lg border border-neutral-200">
-            <table className="w-full text-sm">
-              <thead className="bg-brand text-left text-white">
+          <StickyTable className="w-full">
+              <thead>
                 <tr>
-                  <th className="px-4 py-2 font-medium">#</th>
-                  <th className="px-4 py-2 font-medium">日期</th>
-                  <th className="px-4 py-2 font-medium">{tag?.label ?? '特殊週'}</th>
-                  <th className="px-4 py-2" />
+                  <th className={`${HEAD_CELL} px-4 py-2 text-left`}>#</th>
+                  <th className={`${HEAD_CELL} px-4 py-2 text-left`}>日期</th>
+                  <th className={`${HEAD_CELL} px-4 py-2 text-left`}>{tag?.label ?? '特殊週'}</th>
+                  <th className={`${HEAD_CELL} px-4 py-2 text-left`} />
                 </tr>
               </thead>
               <tbody>
@@ -217,8 +216,7 @@ export function StepTerm() {
                   );
                 })}
               </tbody>
-            </table>
-          </div>
+          </StickyTable>
         )}
 
         <div className="mt-4 flex flex-wrap items-end gap-3">

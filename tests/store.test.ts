@@ -356,9 +356,14 @@ describe('步驟 4：不行日期', () => {
 });
 
 describe('步驟 5：限制條件', () => {
+  it('空白專案一開始就帶著基本規則', () => {
+    expect(createAppStore(null).getState().project.constraints).toEqual([
+      { id: 'c1', type: 'one_role_per_week', hard: true, enabled: true },
+    ]);
+  });
+
   it('新增一條空白規則，回傳新的 id', () => {
     const store = createAppStore(null);
-    expect(store.getState().addConstraint('one_role_per_week')).toBe('c1');
     expect(store.getState().addConstraint('max_per_month')).toBe('c2');
     expect(store.getState().project.constraints[1]).toEqual({
       id: 'c2',
@@ -371,7 +376,7 @@ describe('步驟 5：限制條件', () => {
     });
   });
 
-  it('編輯、停用、改種類、備註留空就移除', () => {
+  it('編輯、停用、備註留空就移除', () => {
     const store = createAppStore(null);
     const id = store.getState().addConstraint('max_consecutive_weeks_per_member');
     store.getState().updateConstraint({
@@ -381,38 +386,49 @@ describe('步驟 5：限制條件', () => {
       enabled: true,
       max: 2,
     });
-    expect(store.getState().project.constraints[0]).toMatchObject({ max: 2 });
+    expect(store.getState().project.constraints[1]).toMatchObject({ max: 2 });
 
     store.getState().setConstraintEnabled(id, false);
-    store.getState().setConstraintHard(id, false);
     store.getState().setConstraintNote(id, '先停用');
-    expect(store.getState().project.constraints[0]).toMatchObject({
+    expect(store.getState().project.constraints[1]).toMatchObject({
       enabled: false,
-      hard: false,
       note: '先停用',
     });
 
     store.getState().setConstraintNote(id, '   ');
-    expect(store.getState().project.constraints[0]).not.toHaveProperty('note');
+    expect(store.getState().project.constraints[1]).not.toHaveProperty('note');
+  });
+
+  it('基本規則刪不掉，只能停用', () => {
+    const store = createAppStore(null);
+    store.getState().deleteConstraint('c1');
+    expect(store.getState().project.constraints.map((item) => item.id)).toEqual(['c1']);
+
+    store.getState().setConstraintEnabled('c1', false);
+    expect(store.getState().project.constraints[0].enabled).toBe(false);
   });
 
   it('刪除之後新增不會重用號碼', () => {
     const store = createAppStore(null);
-    store.getState().addConstraint('one_role_per_week');
-    store.getState().deleteConstraint('c1');
-    expect(store.getState().addConstraint('one_role_per_week')).toBe('c2');
+    const id = store.getState().addConstraint('max_per_month');
+    store.getState().deleteConstraint(id);
+    expect(store.getState().addConstraint('max_per_month')).toBe('c3');
   });
 
-  it('進階 JSON 整批取代，計數器只往前走', () => {
+  it('進階 JSON 整批取代，計數器只往前走，基本規則會補回來', () => {
     const store = createAppStore(null);
     store
       .getState()
       .replaceConstraints([{ id: 'c7', type: 'one_role_per_week', hard: true, enabled: true }]);
     expect(store.getState().project.constraints).toHaveLength(1);
-    expect(store.getState().addConstraint('one_role_per_week')).toBe('c8');
+    expect(store.getState().addConstraint('max_per_month')).toBe('c8');
 
+    // 整段刪光，基本規則還是會自己回來，但號碼只往前走
     store.getState().replaceConstraints([]);
-    expect(store.getState().addConstraint('one_role_per_week')).toBe('c9');
+    expect(store.getState().project.constraints.map((item) => item.type)).toEqual([
+      'one_role_per_week',
+    ]);
+    expect(store.getState().addConstraint('max_per_month')).toBe('c10');
   });
 });
 
@@ -437,6 +453,21 @@ describe('匯入整份專案', () => {
     store.getState().addMember('再一個');
     expect(store.getState().project.members[1].id).toBe('m41');
     expect(store.getState().addConstraint('one_role_per_week')).toBe('c4');
+  });
+
+  it('舊檔案沒有基本規則時自動補上，號碼不跟既有的撞', () => {
+    const store = createAppStore(null);
+    const current = store.getState().project;
+    store.getState().loadProject({
+      ...current,
+      constraints: [{ id: 'c5', type: 'max_consecutive_weeks_per_member', hard: true, enabled: true, max: 1 }],
+    });
+
+    expect(store.getState().project.constraints.map((item) => [item.id, item.type])).toEqual([
+      ['c6', 'one_role_per_week'],
+      ['c5', 'max_consecutive_weeks_per_member'],
+    ]);
+    expect(store.getState().addConstraint('max_per_month')).toBe('c7');
   });
 
   it('聚會日不是起訖日期算出來的檔案，不記 generatedFrom', () => {

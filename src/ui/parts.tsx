@@ -25,6 +25,32 @@ export function Card({
   );
 }
 
+/**
+ * 長表格的外框。整頁一起捲，表頭靠 HEAD_CELL 釘在步驟列底下（規格 §7.7.2）。
+ *
+ * 桌機寬度不設 overflow：只要祖先有 overflow，sticky 就會改成貼著那個容器捲，
+ * 整頁往下拉時表頭反而會被推出畫面。窄螢幕才退回左右捲（那時表頭不釘）。
+ */
+export function StickyTable({
+  className = '',
+  children,
+}: {
+  className?: string;
+  children: ReactNode;
+}) {
+  return (
+    <div className="overflow-x-auto rounded-lg border border-neutral-200 lg:overflow-visible">
+      <table className={`text-sm ${className}`}>{children}</table>
+    </div>
+  );
+}
+
+/**
+ * 釘住的表頭儲存格。top-14 是步驟列的高度；底色要下在每一格上，不能只下在
+ * thead —— 釘住的是格子，thead 的底色不會跟著走。
+ */
+export const HEAD_CELL = 'sticky top-14 z-10 bg-brand font-medium text-white';
+
 export function Field({
   label,
   hint,
