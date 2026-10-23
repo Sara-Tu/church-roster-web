@@ -18,9 +18,10 @@ import {
   applyNthMeetingRule,
   generateMeetingDates,
   insertMeetingDate,
+  ruleDeviationCount,
   toWeeks,
 } from '../domain/term';
-import { removeMember, removeRole } from './cascade';
+import { removeMembers, removeRole } from './cascade';
 import { initCounters, takeId } from './ids';
 import type { IdCounters } from './ids';
 import { browserStorage, loadSaved, saveState } from './persist';
@@ -52,7 +53,8 @@ export interface AppState {
   setMeetingWeekday: (weekday: number) => void;
   generateWeeks: () => number;
   setTagLabel: (label: string) => void;
-  setTagRule: (n: number | null) => void;
+  /** 回傳 true 代表已經即時重算；false 代表有手動改過的週次，要按「套用」 */
+  setTagRule: (n: number | null) => boolean;
   applyTagRule: () => string[];
   toggleWeekTag: (date: string) => void;
   removeWeek: (date: string) => void;
@@ -71,6 +73,8 @@ export interface AppState {
   renameMember: (id: string, name: string) => void;
   setMemberRole: (id: string, roleId: RoleId, on: boolean) => void;
   deleteMember: (id: string) => void;
+  deleteMembers: (ids: readonly string[]) => void;
+  clearMembers: () => void;
   addMembersFromText: (text: string) => ParsedNames;
 
   // 導覽
@@ -199,15 +203,41 @@ function makeAppState(storage: StorageLike | null): StateCreator<AppState> {
           weekTags: current.weekTags.map((tag, i) => (i === 0 ? { ...tag, label } : tag)),
         })),
 
-      setTagRule: (n) =>
-        patchProject((current) => ({
-          ...current,
-          weekTags: current.weekTags.map((tag, i) =>
-            i === 0
-              ? { ...tag, rule: n === null ? { kind: 'manual' } : { kind: 'nthMeetingOfMonth', n } }
-              : tag,
-          ),
-        })),
+      setTagRule: (n) => {
+        const state = get();
+        const id = tagId(state);
+        const weeks = state.project.term.weeks;
+        const previous = state.project.weekTags[0]?.rule;
+
+        // 目前的標記完全等於舊規則算出來的（或根本還沒標），就代表沒有人手動改過，
+        // 換規則可以直接重算；手動改過的話留給「套用到所有週次」按鈕去確認覆蓋。
+        const untouched =
+          previous?.kind === 'nthMeetingOfMonth'
+            ? ruleDeviationCount(weeks, id, previous.n) === 0
+            : weeks.every((week) => !week.tags.includes(id));
+        const applying = n !== null && weeks.length > 0 && untouched;
+
+        commit((current) => ({
+          project: {
+            ...current.project,
+            weekTags: current.project.weekTags.map((tag, i) =>
+              i === 0
+                ? {
+                    ...tag,
+                    rule: n === null ? { kind: 'manual' } : { kind: 'nthMeetingOfMonth', n },
+                  }
+                : tag,
+            ),
+            term: applying
+              ? {
+                  ...current.project.term,
+                  weeks: applyNthMeetingRule(weeks, id, n as number).weeks,
+                }
+              : current.project.term,
+          },
+        }));
+        return applying;
+      },
 
       applyTagRule: () => {
         const state = get();
@@ -315,7 +345,17 @@ function makeAppState(storage: StorageLike | null): StateCreator<AppState> {
           ),
         })),
 
-      deleteMember: (id) => patchProject((current) => removeMember(current, id)),
+      deleteMember: (id) => patchProject((current) => removeMembers(current, [id])),
+
+      deleteMembers: (ids) => patchProject((current) => removeMembers(current, ids)),
+
+      clearMembers: () =>
+        patchProject((current) =>
+          removeMembers(
+            current,
+            current.members.map((member) => member.id),
+          ),
+        ),
 
       addMembersFromText: (text) => {
         const state = get();
@@ -394,5 +434,5 @@ export function createAppStore(storage: StorageLike | null) {
 export const useAppStore = create<AppState>()(makeAppState(browserStorage()));
 
 // 刪除前的影響預估，給確認視窗用
-export { memberRemovalImpact, roleRemovalImpact } from './cascade';
+export { memberRemovalImpact, membersRemovalImpact, roleRemovalImpact } from './cascade';
 export type { CascadeImpact } from './cascade';

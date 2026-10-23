@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { weekdayOf } from '../engine';
 import {
   countTagged,
+  expectedTagged,
   LAST_MEETING,
   ruleDeviationCount,
   WEEKDAY_LABELS,
@@ -27,7 +28,6 @@ export function StepTerm() {
   const store = useAppStore();
 
   const [confirmGenerate, setConfirmGenerate] = useState(false);
-  const [gaps, setGaps] = useState<string[]>([]);
   const [newDate, setNewDate] = useState('');
   const [addError, setAddError] = useState('');
 
@@ -36,14 +36,11 @@ export function StepTerm() {
   const rule = tag?.rule;
   const ruleN = rule?.kind === 'nthMeetingOfMonth' ? rule.n : null;
   const tagged = tag === undefined ? 0 : countTagged(weeks, tag.id);
+
+  // 規則與現況的差距：> 0 代表有人手動勾過，換規則不會自動重算（見 §7.5.4）
   const deviations =
     tag === undefined || ruleN === null ? 0 : ruleDeviationCount(weeks, tag.id, ruleN);
-
-  const generate = () => {
-    setConfirmGenerate(false);
-    store.generateWeeks();
-    setGaps([]);
-  };
+  const gaps = ruleN === null || weeks.length === 0 ? [] : expectedTagged(weeks, ruleN).gaps;
 
   return (
     <div className="flex flex-col gap-6">
@@ -70,7 +67,7 @@ export function StepTerm() {
 
       <Card
         title="聚會日"
-        hint="填起訖日期與固定的聚會星期，按下按鈕一次把整個梯次的聚會日排出來。"
+        hint="填起訖日期、固定的聚會星期與特殊週規則，按下按鈕一次把整個梯次排出來。"
       >
         <div className="grid gap-4 sm:grid-cols-3">
           <Field label="起始日">
@@ -104,11 +101,44 @@ export function StepTerm() {
           </Field>
         </div>
 
-        <div className="mt-4 flex flex-wrap items-center gap-3">
+        {tag !== undefined && (
+          <>
+            <hr className="my-5 border-neutral-200" />
+            <div className="grid gap-4 sm:grid-cols-2">
+              <Field label="特殊週名稱" hint="例如聖餐週、擘餅、主餐">
+                <input
+                  className={INPUT_CLASS}
+                  value={tag.label}
+                  onChange={(event) => store.setTagLabel(event.target.value)}
+                />
+              </Field>
+              <Field
+                label="特殊週規則"
+                hint="以「當月第幾次聚會」計算，聚會日不是星期日的教會也算得對"
+              >
+                <select
+                  className={INPUT_CLASS}
+                  value={ruleN === null ? '' : String(ruleN)}
+                  onChange={(event) =>
+                    store.setTagRule(event.target.value === '' ? null : Number(event.target.value))
+                  }
+                >
+                  {RULE_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+            </div>
+          </>
+        )}
+
+        <div className="mt-5 flex flex-wrap items-center gap-3">
           <Button
             tone="primary"
             disabled={project.term.start === '' || project.term.end === ''}
-            onClick={() => (weeks.length > 0 ? setConfirmGenerate(true) : generate())}
+            onClick={() => (weeks.length > 0 ? setConfirmGenerate(true) : store.generateWeeks())}
           >
             產生聚會日
           </Button>
@@ -119,59 +149,23 @@ export function StepTerm() {
             </span>
           )}
         </div>
+
+        {/* 有人手動勾過時才需要這顆按鈕：換規則本來就會即時重算 */}
+        {tag !== undefined && ruleN !== null && deviations > 0 && (
+          <div className="mt-3 flex flex-wrap items-center gap-3">
+            <Button onClick={() => store.applyTagRule()}>套用規則到所有週次</Button>
+            <span className="text-sm text-notice">
+              你手動改過 {deviations} 週，套用會把它們蓋掉
+            </span>
+          </div>
+        )}
+
+        {gaps.length > 0 && (
+          <p className="mt-3 text-sm text-notice">
+            {gaps.join('、')} 的聚會次數不足，這幾個月沒有{tag?.label ?? '特殊週'}。
+          </p>
+        )}
       </Card>
-
-      {tag !== undefined && (
-        <Card
-          title={tag.label}
-          hint="以「當月第幾次聚會」計算，聚會日不是星期日的教會也算得對。"
-        >
-          <div className="grid gap-4 sm:grid-cols-2">
-            <Field label="名稱">
-              <input
-                className={INPUT_CLASS}
-                value={tag.label}
-                onChange={(event) => store.setTagLabel(event.target.value)}
-              />
-            </Field>
-            <Field label="規則">
-              <select
-                className={INPUT_CLASS}
-                value={ruleN === null ? '' : String(ruleN)}
-                onChange={(event) =>
-                  store.setTagRule(event.target.value === '' ? null : Number(event.target.value))
-                }
-              >
-                {RULE_OPTIONS.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-            </Field>
-          </div>
-
-          <div className="mt-4 flex flex-wrap items-center gap-3">
-            <Button
-              disabled={ruleN === null || weeks.length === 0}
-              onClick={() => setGaps(store.applyTagRule())}
-            >
-              套用到所有週次
-            </Button>
-            {ruleN !== null && deviations > 0 && (
-              <span className="text-sm text-notice">
-                會覆蓋你手動改過的 {deviations} 週
-              </span>
-            )}
-          </div>
-
-          {gaps.length > 0 && (
-            <p className="mt-3 text-sm text-notice">
-              {gaps.join('、')} 的聚會次數不足，這幾個月沒有{tag.label}。
-            </p>
-          )}
-        </Card>
-      )}
 
       <Card
         title="逐週確認"
@@ -266,7 +260,10 @@ export function StepTerm() {
           </>
         }
         confirmLabel="重新產生"
-        onConfirm={generate}
+        onConfirm={() => {
+          setConfirmGenerate(false);
+          store.generateWeeks();
+        }}
         onCancel={() => setConfirmGenerate(false)}
       />
     </div>

@@ -3,7 +3,9 @@
 import { describe, expect, it } from 'vitest';
 import {
   memberRemovalImpact,
+  membersRemovalImpact,
   removeMember,
+  removeMembers,
   removeRole,
   roleRemovalImpact,
 } from '../src/store/cascade';
@@ -189,5 +191,55 @@ describe('removeMember', () => {
     ]);
     expect(memberRemovalImpact(project, 'm1')).toEqual({ removed: 0, modified: 0 });
     expect(removeMember(project, 'm1').constraints).toHaveLength(4);
+  });
+});
+
+describe('removeMembers（批次）', () => {
+  it('同一條規則被兩個人影響時只算一次', () => {
+    const project = withConstraints([
+      rule({
+        type: 'forbidden_together',
+        roleId: 'r3',
+        memberIds: ['m1', 'm2', 'm3'],
+        mode: 'any_two',
+      }),
+    ]);
+    // 逐筆相加會得到 2 次修改，批次應該是 1 次
+    expect(membersRemovalImpact(project, ['m1', 'm2'])).toEqual({ removed: 1, modified: 0 });
+    expect(membersRemovalImpact(project, ['m1'])).toEqual({ removed: 0, modified: 1 });
+  });
+
+  it('一次移除多個人，名單型欄位只留下剩下的人', () => {
+    const project = withConstraints([
+      rule({
+        type: 'rotation_groups',
+        roleId: 'r3',
+        groups: [
+          ['m1', 'm2'],
+          ['m2', 'm3'],
+        ],
+        cycleBy: 'week',
+      }),
+    ]);
+    const next = removeMembers(project, ['m1', 'm2']);
+    expect(next.members.map((m) => m.id)).toEqual(['m3']);
+    expect(next.constraints[0]).toMatchObject({ groups: [['m3']] });
+  });
+
+  it('全部清空時連帶清掉所有參照人員的規則', () => {
+    const project = withConstraints([
+      rule({ type: 'one_role_per_week' }),
+      rule({ type: 'max_per_month', memberId: 'm1', max: 2, roleId: null }),
+      rule({ type: 'rotation_groups', roleId: 'r3', groups: [['m1', 'm3']], cycleBy: 'week' }),
+    ]);
+    const next = removeMembers(project, ['m1', 'm2', 'm3']);
+    expect(next.members).toEqual([]);
+    expect(next.constraints.map((c) => c.type)).toEqual(['one_role_per_week']);
+  });
+
+  it('空清單什麼都不動', () => {
+    const project = withConstraints([rule({ type: 'one_role_per_week' })]);
+    expect(removeMembers(project, [])).toEqual(project);
+    expect(membersRemovalImpact(project, [])).toEqual({ removed: 0, modified: 0 });
   });
 });

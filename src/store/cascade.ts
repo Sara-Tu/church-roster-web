@@ -153,28 +153,59 @@ function withoutMember(constraint: Constraint, memberId: MemberId): Rewrite {
   }
 }
 
-export function memberRemovalImpact(project: Project, memberId: MemberId): CascadeImpact {
+/**
+ * 一次刪掉多個人。逐條規則把每個人依序拿掉，所以同一條規則被兩個人影響時
+ * 只會算一次（批次刪除的確認視窗要的是這個數字，不是逐筆相加）。
+ */
+function withoutMembers(constraint: Constraint, memberIds: ReadonlySet<MemberId>): Rewrite {
+  let current = constraint;
+  let changed = false;
+  for (const memberId of memberIds) {
+    const rewrite = withoutMember(current, memberId);
+    if (rewrite.kind === 'remove') return { kind: 'remove' };
+    if (rewrite.kind === 'modify') {
+      current = rewrite.next;
+      changed = true;
+    }
+  }
+  return changed ? { kind: 'modify', next: current } : { kind: 'keep' };
+}
+
+export function membersRemovalImpact(
+  project: Project,
+  memberIds: readonly MemberId[],
+): CascadeImpact {
+  const ids = new Set(memberIds);
   let removed = 0;
   let modified = 0;
   for (const constraint of project.constraints) {
-    const rewrite = withoutMember(constraint, memberId);
+    const rewrite = withoutMembers(constraint, ids);
     if (rewrite.kind === 'remove') removed += 1;
     else if (rewrite.kind === 'modify') modified += 1;
   }
   return { removed, modified };
 }
 
-export function removeMember(project: Project, memberId: MemberId): Project {
+export function removeMembers(project: Project, memberIds: readonly MemberId[]): Project {
+  const ids = new Set(memberIds);
   const constraints: Constraint[] = [];
   for (const constraint of project.constraints) {
-    const rewrite = withoutMember(constraint, memberId);
+    const rewrite = withoutMembers(constraint, ids);
     if (rewrite.kind === 'remove') continue;
     constraints.push(rewrite.kind === 'modify' ? rewrite.next : constraint);
   }
 
   return {
     ...project,
-    members: project.members.filter((member) => member.id !== memberId),
+    members: project.members.filter((member) => !ids.has(member.id)),
     constraints,
   };
+}
+
+export function memberRemovalImpact(project: Project, memberId: MemberId): CascadeImpact {
+  return membersRemovalImpact(project, [memberId]);
+}
+
+export function removeMember(project: Project, memberId: MemberId): Project {
+  return removeMembers(project, [memberId]);
 }

@@ -90,6 +90,46 @@ describe('步驟 1：梯次', () => {
     ).toEqual([]);
   });
 
+  it('換規則會即時重算，不必再按套用', () => {
+    const store = createAppStore(null);
+    buildTerm(store);
+    const tagged = () =>
+      store
+        .getState()
+        .project.term.weeks.filter((w) => w.tags.includes(DEFAULT_TAG_ID))
+        .map((w) => w.date);
+    expect(tagged()[0]).toBe('2027-01-03');
+
+    expect(store.getState().setTagRule(2)).toBe(true);
+    expect(tagged()[0]).toBe('2027-01-10');
+    expect(tagged()).toHaveLength(6);
+  });
+
+  it('手動勾過之後換規則不會自動蓋掉，要自己按套用', () => {
+    const store = createAppStore(null);
+    buildTerm(store);
+    store.getState().toggleWeekTag('2027-01-17');
+
+    expect(store.getState().setTagRule(2)).toBe(false);
+    const weeks = store.getState().project.term.weeks;
+    expect(weeks.find((w) => w.date === '2027-01-17')?.tags).toEqual([DEFAULT_TAG_ID]);
+    expect(weeks.find((w) => w.date === '2027-01-03')?.tags).toEqual([DEFAULT_TAG_ID]);
+
+    store.getState().applyTagRule();
+    const applied = store.getState().project.term.weeks;
+    expect(applied.find((w) => w.date === '2027-01-10')?.tags).toEqual([DEFAULT_TAG_ID]);
+    expect(applied.find((w) => w.date === '2027-01-17')?.tags).toEqual([]);
+  });
+
+  it('還沒產生聚會日時換規則只是記下來', () => {
+    const store = createAppStore(null);
+    expect(store.getState().setTagRule(3)).toBe(false);
+    expect(store.getState().project.weekTags[0].rule).toEqual({
+      kind: 'nthMeetingOfMonth',
+      n: 3,
+    });
+  });
+
   it('規則設成每月第五次聚會時回報湊不齊的月份', () => {
     const store = createAppStore(null);
     buildTerm(store);
@@ -213,6 +253,36 @@ describe('步驟 3：人員', () => {
     store.getState().deleteMember('m1');
     store.getState().addMember('丙');
     expect(store.getState().project.members.map((m) => m.id)).toEqual(['m2', 'm3']);
+  });
+});
+
+describe('批次刪除人員', () => {
+  it('一次刪掉勾選的幾個人', () => {
+    const store = createAppStore(null);
+    store.getState().addMembersFromText(NAMES);
+    store.getState().deleteMembers(['m1', 'm3', 'm5']);
+
+    const members = store.getState().project.members;
+    expect(members).toHaveLength(25);
+    expect(members.map((m) => m.id)).not.toContain('m3');
+    expect(members[0].id).toBe('m2');
+  });
+
+  it('清空所有人員', () => {
+    const store = createAppStore(null);
+    store.getState().addMembersFromText(NAMES);
+    store.getState().clearMembers();
+    expect(store.getState().project.members).toEqual([]);
+    // 角色與週次不受影響
+    expect(store.getState().project.roles).toHaveLength(5);
+  });
+
+  it('清空之後新增的人不會撞到舊號碼', () => {
+    const store = createAppStore(null);
+    store.getState().addMembersFromText(NAMES);
+    store.getState().clearMembers();
+    store.getState().addMember('新同工');
+    expect(store.getState().project.members[0].id).toBe('m29');
   });
 });
 
