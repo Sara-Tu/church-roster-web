@@ -3,7 +3,7 @@
  *
  * 讀不回來時（JSON 壞掉、schemaVersion 不符）**不覆蓋**原本的資料：
  * 改名成 unreadable-{timestamp} 留著，以空白專案起步並在問題清單說明。
- * Phase 3 有匯出的 UI 之後，才有辦法給使用者取回。
+ * 匯入面板提供「下載備份」把那一份原始字串存下來（規格 §7.6.5）。
  */
 
 import { SCHEMA_VERSION } from '../engine';
@@ -67,6 +67,16 @@ export function loadSaved(storage: StorageLike | null): LoadResult {
     return { saved: null, backupKey: null };
   }
   return { saved: null, backupKey };
+}
+
+/** 讀回改名保留的那一份原始字串，給匯入面板的「下載備份」用 */
+export function readBackup(storage: StorageLike | null, key: string): string | null {
+  if (storage === null) return null;
+  try {
+    return storage.getItem(key);
+  } catch {
+    return null;
+  }
 }
 
 /** 回傳 false 代表寫不進去（隱私模式、空間不足） */

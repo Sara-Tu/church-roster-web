@@ -8,12 +8,23 @@
 import { create } from 'zustand';
 import { createStore } from 'zustand/vanilla';
 import type { StateCreator } from 'zustand';
-import { SCHEMA_VERSION } from '../engine';
-import type { Member, Project, Role, RoleId, WeekTagId } from '../engine';
+import { SCHEMA_VERSION, weekdayOf } from '../engine';
+import type {
+  Constraint,
+  ConstraintType,
+  Member,
+  Project,
+  Role,
+  RoleId,
+  WeekTagId,
+} from '../engine';
 import { APP_VERSION } from '../version';
 import { defaultRoles, moveRole as reorderRoles } from '../domain/roles';
 import { parseNameList, toggleRole } from '../domain/members';
 import type { ParsedNames } from '../domain/members';
+import { blankConstraint } from '../domain/constraints';
+import { mergeDates, toggleDate } from '../domain/unavailable';
+import type { ImportMode, ParsedEntry } from '../domain/unavailable';
 import {
   applyNthMeetingRule,
   generateMeetingDates,
@@ -77,6 +88,26 @@ export interface AppState {
   clearMembers: () => void;
   addMembersFromText: (text: string) => ParsedNames;
 
+  // 步驟 4
+  toggleUnavailable: (memberId: string, date: string, on: boolean) => void;
+  clearMemberUnavailable: (memberId: string) => void;
+  /** 清掉不是本梯次聚會日的殘留日期，回傳清掉幾筆 */
+  clearStaleUnavailable: () => number;
+  /** 套用 AI 整理出來的結果，回傳有幾個人的日期被改動 */
+  importUnavailable: (entries: readonly ParsedEntry[], mode: ImportMode) => number;
+
+  // 步驟 5
+  addConstraint: (type: ConstraintType) => string;
+  updateConstraint: (constraint: Constraint) => void;
+  setConstraintEnabled: (id: string, enabled: boolean) => void;
+  setConstraintHard: (id: string, hard: boolean) => void;
+  setConstraintNote: (id: string, note: string) => void;
+  deleteConstraint: (id: string) => void;
+  replaceConstraints: (constraints: readonly Constraint[]) => void;
+
+  /** 匯入：整份換掉，導覽直接進頁籤模式並停在步驟 1 */
+  loadProject: (project: Project) => void;
+
   // 導覽
   goToStep: (step: StepId) => void;
   nextStep: () => void;
@@ -85,6 +116,10 @@ export interface AppState {
 
   /** 測試與離開頁面前用：立刻寫入，不等 debounce */
   flushSave: () => void;
+}
+
+function same(a: readonly string[], b: readonly string[]): boolean {
+  return a.length === b.length && a.every((value, i) => value === b[i]);
 }
 
 export function today(): string {
@@ -157,6 +192,13 @@ function makeAppState(storage: StorageLike | null): StateCreator<AppState> {
 
     const patchTerm = (update: (term: Project['term']) => Project['term']) => {
       patchProject((current) => ({ ...current, term: update(current.term) }));
+    };
+
+    const patchConstraint = (id: string, update: (constraint: Constraint) => Constraint) => {
+      patchProject((current) => ({
+        ...current,
+        constraints: current.constraints.map((item) => (item.id === id ? update(item) : item)),
+      }));
     };
 
     const tagId = (state: AppState): WeekTagId => state.project.weekTags[0]?.id ?? DEFAULT_TAG_ID;
@@ -377,6 +419,129 @@ function makeAppState(storage: StorageLike | null): StateCreator<AppState> {
           project: { ...current.project, members: [...current.project.members, ...added] },
         }));
         return parsed;
+      },
+
+      // ── 步驟 4 ──
+      toggleUnavailable: (memberId, date, on) =>
+        patchProject((current) => ({
+          ...current,
+          members: current.members.map((member) =>
+            member.id === memberId
+              ? { ...member, unavailable: toggleDate(member.unavailable, date, on) }
+              : member,
+          ),
+        })),
+
+      clearMemberUnavailable: (memberId) =>
+        patchProject((current) => ({
+          ...current,
+          members: current.members.map((member) =>
+            member.id === memberId && member.unavailable.length > 0
+              ? { ...member, unavailable: [] }
+              : member,
+          ),
+        })),
+
+      clearStaleUnavailable: () => {
+        let removed = 0;
+        patchProject((current) => {
+          const dates = new Set(current.term.weeks.map((week) => week.date));
+          const members = current.members.map((member) => {
+            const kept = member.unavailable.filter((date) => dates.has(date));
+            if (kept.length === member.unavailable.length) return member;
+            removed += member.unavailable.length - kept.length;
+            return { ...member, unavailable: kept };
+          });
+          return { ...current, members };
+        });
+        return removed;
+      },
+
+      importUnavailable: (entries, mode) => {
+        const incoming = new Map(entries.map((entry) => [entry.memberId, entry.dates]));
+        let changed = 0;
+        patchProject((current) => ({
+          ...current,
+          members: current.members.map((member) => {
+            const dates = incoming.get(member.id);
+            if (dates === undefined) return member;
+            const next = mergeDates(member.unavailable, dates, mode);
+            if (same(next, member.unavailable)) return member;
+            changed += 1;
+            return { ...member, unavailable: next };
+          }),
+        }));
+        return changed;
+      },
+
+      // ── 步驟 5 ──
+      addConstraint: (type) => {
+        const taken = takeId(get().counters, 'c');
+        commit((state) => ({
+          counters: taken.counters,
+          project: {
+            ...state.project,
+            constraints: [...state.project.constraints, blankConstraint(type, taken.id)],
+          },
+        }));
+        return taken.id;
+      },
+
+      updateConstraint: (constraint) => patchConstraint(constraint.id, () => constraint),
+
+      setConstraintEnabled: (id, enabled) =>
+        patchConstraint(id, (item) => ({ ...item, enabled })),
+
+      setConstraintHard: (id, hard) => patchConstraint(id, (item) => ({ ...item, hard })),
+
+      setConstraintNote: (id, note) =>
+        patchConstraint(id, (item) => {
+          const next = { ...item };
+          if (note.trim() === '') delete next.note;
+          else next.note = note;
+          return next;
+        }),
+
+      deleteConstraint: (id) =>
+        patchProject((current) => ({
+          ...current,
+          constraints: current.constraints.filter((item) => item.id !== id),
+        })),
+
+      replaceConstraints: (constraints) =>
+        commit((state) => {
+          const project = { ...state.project, constraints: [...constraints] };
+          // 進階 JSON 可以自己指定 id，計數器只往前走，避免之後發出已經用過的號碼
+          const scanned = initCounters(project);
+          return {
+            project,
+            counters: { ...state.counters, c: Math.max(state.counters.c, scanned.c) },
+          };
+        }),
+
+      // ── 匯入 ──
+      loadProject: (incoming) => {
+        const weeks = incoming.term.weeks;
+        const weekday = weeks.length > 0 ? weekdayOf(weeks[0].date) : 0;
+        const generated = generateMeetingDates(incoming.term.start, incoming.term.end, weekday);
+        // 聚會日剛好等於規則算出來的，才記 generatedFrom，否則會誤報「日期改過了」
+        const untouched =
+          generated.length === weeks.length &&
+          generated.every((date, i) => date === weeks[i].date);
+
+        commit(() => ({
+          project: incoming,
+          counters: initCounters(incoming),
+          ui: {
+            step: 'term',
+            guideDone: true,
+            maxReached: LAST_GUIDE_INDEX,
+            meetingWeekday: weekday,
+            generatedFrom: untouched
+              ? { start: incoming.term.start, end: incoming.term.end, weekday }
+              : null,
+          },
+        }));
       },
 
       // ── 導覽 ──

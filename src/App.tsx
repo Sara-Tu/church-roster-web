@@ -1,12 +1,15 @@
 import { useEffect } from 'react';
 import { useAppStore } from './store/project';
+import { ImportExport } from './ui/ImportExport';
 import { IssueBar } from './ui/IssueBar';
 import { Nav } from './ui/Nav';
 import { Button } from './ui/parts';
+import { StepConstraints } from './ui/StepConstraints';
 import { StepMembers } from './ui/StepMembers';
 import { StepRoles } from './ui/StepRoles';
 import { StepTerm } from './ui/StepTerm';
 import { StepTodo } from './ui/StepTodo';
+import { StepUnavailable } from './ui/StepUnavailable';
 import { LAST_GUIDE_INDEX, stepIndex } from './ui/steps';
 import { APP_VERSION } from './version';
 
@@ -33,22 +36,7 @@ export default function App() {
           <h1 className="text-lg font-bold">教會服事排班</h1>
           <div className="flex items-center gap-2 text-sm">
             <span className="tabular text-white/60">v{APP_VERSION}</span>
-            <button
-              type="button"
-              disabled
-              title="Phase 3 接上"
-              className="rounded-lg border border-white/40 px-3 py-1.5 opacity-50"
-            >
-              匯入
-            </button>
-            <button
-              type="button"
-              disabled
-              title="Phase 3 接上"
-              className="rounded-lg border border-white/40 px-3 py-1.5 opacity-50"
-            >
-              匯出
-            </button>
+            <ImportExport />
           </div>
         </div>
       </header>
@@ -60,9 +48,9 @@ export default function App() {
         {step === 'term' && <StepTerm />}
         {step === 'roles' && <StepRoles />}
         {step === 'members' && <StepMembers />}
-        {(step === 'unavailable' || step === 'constraints' || step === 'result') && (
-          <StepTodo step={step} />
-        )}
+        {step === 'unavailable' && <StepUnavailable />}
+        {step === 'constraints' && <StepConstraints />}
+        {step === 'result' && <StepTodo step={step} />}
 
         {!guideDone && (
           <div className="mt-8 flex items-center justify-between">

@@ -7,7 +7,9 @@
 import { isIsoDate } from '../engine';
 import type { Project, Week } from '../engine';
 import type { StepId } from '../ui/steps';
+import { invalidConstraintCount } from './constraints';
 import { candidateCount } from './roles';
+import { weekLoad } from './unavailable';
 import { duplicateNames } from './members';
 import { expectedTagged } from './term';
 
@@ -81,6 +83,16 @@ export function collectIssues(
     );
   }
 
+  const shortWeeks = weekLoad(project).filter((week) => week.shortages.length > 0);
+  if (shortWeeks.length > 0) {
+    add(
+      'week_short_candidates',
+      'notice',
+      `有 ${shortWeeks.length} 週扣掉說不行的人之後，有位置排不滿`,
+      'unavailable',
+    );
+  }
+
   // ── 步驟 2 ──
   if (project.roles.some((role) => role.name.trim() === '')) {
     add('role_unnamed', 'alert', '有服事位置還沒命名', 'roles');
@@ -123,6 +135,12 @@ export function collectIssues(
     add('member_no_role', 'notice', `有 ${roleless} 人還沒勾任何服事位置`, 'members');
   }
 
+  // ── 步驟 5 ──
+  const invalid = invalidConstraintCount(project);
+  if (invalid > 0) {
+    add('constraint_invalid', 'alert', `有 ${invalid} 條限制條件還沒填完`, 'constraints');
+  }
+
   // ── 儲存 ──
   if (!storage.writable) {
     add(
@@ -136,7 +154,7 @@ export function collectIssues(
     add(
       'storage_unreadable',
       'notice',
-      `瀏覽器裡原本的存檔讀不回來，已改名保留在 ${storage.backupKey}，目前是空白專案`,
+      '瀏覽器裡原本的存檔讀不回來，已經改名保留著，目前是空白專案。可以在右上角的「匯入」裡下載那一份備份',
       'term',
     );
   }

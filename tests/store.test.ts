@@ -286,6 +286,171 @@ describe('批次刪除人員', () => {
   });
 });
 
+describe('步驟 4：不行日期', () => {
+  function withTerm() {
+    const store = createAppStore(null);
+    buildTerm(store);
+    store.getState().addMembersFromText(NAMES);
+    return store;
+  }
+
+  it('勾起來、取消、維持日期遞增', () => {
+    const store = withTerm();
+    store.getState().toggleUnavailable('m1', '2027-03-07', true);
+    store.getState().toggleUnavailable('m1', '2027-01-10', true);
+    expect(store.getState().project.members[0].unavailable).toEqual(['2027-01-10', '2027-03-07']);
+
+    store.getState().toggleUnavailable('m1', '2027-01-10', false);
+    expect(store.getState().project.members[0].unavailable).toEqual(['2027-03-07']);
+  });
+
+  it('清掉某一個人的全部日期', () => {
+    const store = withTerm();
+    store.getState().toggleUnavailable('m2', '2027-01-10', true);
+    store.getState().clearMemberUnavailable('m2');
+    expect(store.getState().project.members[1].unavailable).toEqual([]);
+  });
+
+  it('只清掉不是本梯次聚會日的那些', () => {
+    const store = withTerm();
+    store.getState().toggleUnavailable('m1', '2027-01-10', true);
+    store
+      .getState()
+      .importUnavailable([{ memberId: 'm2', name: '同工2', dates: ['2026-12-25'] }], 'add');
+
+    expect(store.getState().clearStaleUnavailable()).toBe(1);
+    expect(store.getState().project.members[0].unavailable).toEqual(['2027-01-10']);
+    expect(store.getState().project.members[1].unavailable).toEqual([]);
+    // 已經清乾淨之後再按一次是 0
+    expect(store.getState().clearStaleUnavailable()).toBe(0);
+  });
+
+  it('匯入：取代與加上去，回傳有幾個人被改動', () => {
+    const store = withTerm();
+    store.getState().toggleUnavailable('m1', '2027-01-10', true);
+
+    const added = store
+      .getState()
+      .importUnavailable([{ memberId: 'm1', name: '同工1', dates: ['2027-02-07'] }], 'add');
+    expect(added).toBe(1);
+    expect(store.getState().project.members[0].unavailable).toEqual([
+      '2027-01-10',
+      '2027-02-07',
+    ]);
+
+    store
+      .getState()
+      .importUnavailable([{ memberId: 'm1', name: '同工1', dates: ['2027-02-07'] }], 'replace');
+    expect(store.getState().project.members[0].unavailable).toEqual(['2027-02-07']);
+
+    // 內容沒變就不算改動；名單裡沒有的人直接忽略
+    expect(
+      store
+        .getState()
+        .importUnavailable([{ memberId: 'm1', name: '同工1', dates: ['2027-02-07'] }], 'replace'),
+    ).toBe(0);
+    expect(
+      store.getState().importUnavailable([{ memberId: 'm99', name: '路人', dates: [] }], 'replace'),
+    ).toBe(0);
+  });
+});
+
+describe('步驟 5：限制條件', () => {
+  it('新增一條空白規則，回傳新的 id', () => {
+    const store = createAppStore(null);
+    expect(store.getState().addConstraint('one_role_per_week')).toBe('c1');
+    expect(store.getState().addConstraint('max_per_month')).toBe('c2');
+    expect(store.getState().project.constraints[1]).toEqual({
+      id: 'c2',
+      type: 'max_per_month',
+      hard: true,
+      enabled: true,
+      memberId: '',
+      max: 1,
+      roleId: null,
+    });
+  });
+
+  it('編輯、停用、改種類、備註留空就移除', () => {
+    const store = createAppStore(null);
+    const id = store.getState().addConstraint('max_consecutive_weeks_per_member');
+    store.getState().updateConstraint({
+      id,
+      type: 'max_consecutive_weeks_per_member',
+      hard: true,
+      enabled: true,
+      max: 2,
+    });
+    expect(store.getState().project.constraints[0]).toMatchObject({ max: 2 });
+
+    store.getState().setConstraintEnabled(id, false);
+    store.getState().setConstraintHard(id, false);
+    store.getState().setConstraintNote(id, '先停用');
+    expect(store.getState().project.constraints[0]).toMatchObject({
+      enabled: false,
+      hard: false,
+      note: '先停用',
+    });
+
+    store.getState().setConstraintNote(id, '   ');
+    expect(store.getState().project.constraints[0]).not.toHaveProperty('note');
+  });
+
+  it('刪除之後新增不會重用號碼', () => {
+    const store = createAppStore(null);
+    store.getState().addConstraint('one_role_per_week');
+    store.getState().deleteConstraint('c1');
+    expect(store.getState().addConstraint('one_role_per_week')).toBe('c2');
+  });
+
+  it('進階 JSON 整批取代，計數器只往前走', () => {
+    const store = createAppStore(null);
+    store
+      .getState()
+      .replaceConstraints([{ id: 'c7', type: 'one_role_per_week', hard: true, enabled: true }]);
+    expect(store.getState().project.constraints).toHaveLength(1);
+    expect(store.getState().addConstraint('one_role_per_week')).toBe('c8');
+
+    store.getState().replaceConstraints([]);
+    expect(store.getState().addConstraint('one_role_per_week')).toBe('c9');
+  });
+});
+
+describe('匯入整份專案', () => {
+  it('換掉資料、重算計數器、直接進頁籤模式', () => {
+    const store = createAppStore(null);
+    buildTerm(store);
+    store.getState().addMembersFromText(NAMES);
+
+    const current = store.getState().project;
+    store.getState().loadProject({
+      ...current,
+      term: { ...current.term, name: '另一個梯次' },
+      members: [{ id: 'm40', name: '匯入的人', roles: [], unavailable: [] }],
+      constraints: [{ id: 'c3', type: 'one_role_per_week', hard: true, enabled: true }],
+    });
+
+    expect(store.getState().project.term.name).toBe('另一個梯次');
+    expect(store.getState().project.members).toHaveLength(1);
+    expect(store.getState().ui).toMatchObject({ step: 'term', guideDone: true, maxReached: 4 });
+
+    store.getState().addMember('再一個');
+    expect(store.getState().project.members[1].id).toBe('m41');
+    expect(store.getState().addConstraint('one_role_per_week')).toBe('c4');
+  });
+
+  it('聚會日不是起訖日期算出來的檔案，不記 generatedFrom', () => {
+    const store = createAppStore(null);
+    buildTerm(store);
+    const project = store.getState().project;
+    store.getState().loadProject({
+      ...project,
+      term: { ...project.term, weeks: project.term.weeks.slice(0, 10) },
+    });
+    expect(store.getState().ui.generatedFrom).toBeNull();
+  });
+});
+
 describe('導覽', () => {
   it('引導模式只能往回點已經到過的步驟', () => {
     const store = createAppStore(null);

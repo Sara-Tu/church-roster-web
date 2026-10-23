@@ -1,4 +1,4 @@
-/** 問題清單的 15 個代碼。規格 §7.5.8、§7.5.9 */
+/** 問題清單的 17 個代碼。規格 §7.5.8、§7.6.6 */
 
 import { describe, expect, it } from 'vitest';
 import { collectIssues } from '../src/domain/issues';
@@ -142,6 +142,55 @@ describe('步驟 3', () => {
   });
 });
 
+describe('步驟 4 與 5', () => {
+  it('week_short_candidates：某幾週扣掉不行的人之後排不滿', () => {
+    const project = healthy();
+    project.members[1].unavailable = [project.term.weeks[0].date];
+    const issue = collectIssues(project, NO_NAV, OK_STORAGE).find(
+      (item) => item.code === 'week_short_candidates',
+    );
+    expect(issue).toMatchObject({ level: 'notice', step: 'unavailable' });
+    expect(issue?.message).toContain('1 週');
+  });
+
+  it('constraint_invalid：有規則還沒填完', () => {
+    const project = healthy();
+    project.constraints = [
+      { id: 'c1', type: 'one_role_per_week', hard: true, enabled: true },
+      {
+        id: 'c2',
+        type: 'max_per_month',
+        hard: true,
+        enabled: true,
+        memberId: '',
+        max: 1,
+        roleId: null,
+      },
+      {
+        id: 'c3',
+        type: 'max_per_month',
+        hard: true,
+        enabled: false,
+        memberId: '',
+        max: 1,
+        roleId: null,
+      },
+    ];
+    const issue = collectIssues(project, NO_NAV, OK_STORAGE).find(
+      (item) => item.code === 'constraint_invalid',
+    );
+    // 停用的那條也算：引擎的驗證不看 enabled，一樣會擋住產生班表
+    expect(issue).toMatchObject({ level: 'alert', step: 'constraints' });
+    expect(issue?.message).toContain('2 條');
+  });
+
+  it('規則都填完了就不提示', () => {
+    const project = healthy();
+    project.constraints = [{ id: 'c1', type: 'one_role_per_week', hard: true, enabled: true }];
+    expect(codes(project)).not.toContain('constraint_invalid');
+  });
+});
+
 describe('儲存', () => {
   it('storage_unwritable', () => {
     expect(codes(healthy(), NO_NAV, { writable: false, backupKey: null })).toContain(
@@ -149,14 +198,12 @@ describe('儲存', () => {
     );
   });
 
-  it('storage_unreadable 會把備份的 key 寫進訊息', () => {
+  it('storage_unreadable 會告訴使用者去哪裡拿備份', () => {
     const issues = collectIssues(healthy(), NO_NAV, {
       writable: true,
       backupKey: 'church-roster/project/unreadable-x',
     });
-    expect(issues.find((i) => i.code === 'storage_unreadable')?.message).toContain(
-      'unreadable-x',
-    );
+    expect(issues.find((i) => i.code === 'storage_unreadable')?.message).toContain('匯入');
   });
 });
 
