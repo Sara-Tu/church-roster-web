@@ -14,7 +14,8 @@ export function Nav() {
   const currentIndex = stepIndex(step);
 
   return (
-    <nav className="border-b border-neutral-200 bg-stripe">
+    // sticky：表格拉長之後不用滑回最上面才能換步驟
+    <nav className="sticky top-0 z-30 border-b border-neutral-200 bg-stripe shadow-sm">
       <ol className="mx-auto flex max-w-[1200px] flex-wrap gap-x-2 gap-y-2 px-6 py-3 text-sm">
         {items.map((item, i) => {
           const reachable = guideDone || i <= maxReached;

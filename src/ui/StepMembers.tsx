@@ -47,6 +47,8 @@ export function StepMembers() {
     const parsed = addMembersFromText(pasted);
     const parts = [`新增 ${parsed.names.length} 人`];
     if (parsed.skipped > 0) parts.push(`略過 ${parsed.skipped} 個重複的姓名`);
+    // 建立完的下一步就是勾位置，提示放在這裡最容易被看到
+    if (parsed.names.length > 0) parts.push('接著在下面的表格勾服事位置');
     setResult(parts.join('，'));
     if (parsed.names.length > 0) setPasted('');
   };
@@ -62,7 +64,7 @@ export function StepMembers() {
     <div className="flex flex-col gap-6">
       <Card
         title="貼上一串姓名"
-        hint="換行、逗號、頓號、分號都可以分隔。貼完之後再到下面的表格勾服事位置。"
+        hint="換行、逗號、頓號、分號都可以分隔。貼上後按「批次建立」，人就會出現在下面的表格，再到那裡勾每個人的服事位置。"
       >
         <textarea
           className={`${INPUT_CLASS} h-28 w-full font-sans`}
