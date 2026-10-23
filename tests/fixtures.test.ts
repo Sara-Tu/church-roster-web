@@ -147,7 +147,7 @@ describe('golden 班表（現有 Python 引擎的輸出）', () => {
     }
   });
 
-  it('同一人同一週只排一個角色（品生式雙角色例外除外）', () => {
+  it('同一人同一週只排一個角色（雙角色例外除外）', () => {
     const dualRoleMembers = new Set(
       project.constraints
         .filter((c) => c.type === 'dual_role_exception')

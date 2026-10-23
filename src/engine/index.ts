@@ -3,6 +3,7 @@
 export { runScheduler } from './run';
 export { ProjectValidationError } from './context';
 export { SCHEMA_VERSION } from './schema';
+export { addDays, fromEpochDay, isIsoDate, toEpochDay, weekdayOf } from './dates';
 export type {
   Constraint,
   ConstraintType,

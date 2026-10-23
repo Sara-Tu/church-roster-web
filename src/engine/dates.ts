@@ -45,3 +45,17 @@ export function daysBetween(from: IsoDate, to: IsoDate): number {
 export function weeksBetween(from: IsoDate, to: IsoDate): number {
   return Math.floor(daysBetween(from, to) / 7);
 }
+
+/** epoch day 轉回 YYYY-MM-DD */
+export function fromEpochDay(day: number): IsoDate {
+  return new Date(day * MS_PER_DAY).toISOString().slice(0, 10);
+}
+
+/** 0 = 星期日。epoch day 0（1970-01-01）是星期四，所以要補 4 */
+export function weekdayOf(value: IsoDate): number {
+  return (((toEpochDay(value) + 4) % 7) + 7) % 7;
+}
+
+export function addDays(value: IsoDate, days: number): IsoDate {
+  return fromEpochDay(toEpochDay(value) + days);
+}

@@ -1,18 +1,42 @@
-import { STEPS } from './ui/steps';
+import { useEffect } from 'react';
+import { useAppStore } from './store/project';
+import { IssueBar } from './ui/IssueBar';
+import { Nav } from './ui/Nav';
+import { Button } from './ui/parts';
+import { StepMembers } from './ui/StepMembers';
+import { StepRoles } from './ui/StepRoles';
+import { StepTerm } from './ui/StepTerm';
+import { StepTodo } from './ui/StepTodo';
+import { LAST_GUIDE_INDEX, stepIndex } from './ui/steps';
+import { APP_VERSION } from './version';
 
-/**
- * Phase 0 骨架：只有版面外殼與步驟指示條，功能從 Phase 1（排班引擎）起依序接上。
- */
 export default function App() {
+  const step = useAppStore((state) => state.ui.step);
+  const guideDone = useAppStore((state) => state.ui.guideDone);
+  const nextStep = useAppStore((state) => state.nextStep);
+  const prevStep = useAppStore((state) => state.prevStep);
+  const flushSave = useAppStore((state) => state.flushSave);
+
+  // 關掉分頁前把還在 debounce 裡的那一次寫入補上
+  useEffect(() => {
+    window.addEventListener('pagehide', flushSave);
+    return () => window.removeEventListener('pagehide', flushSave);
+  }, [flushSave]);
+
+  const index = stepIndex(step);
+  const skippable = step === 'unavailable' || step === 'constraints';
+
   return (
-    <div className="min-h-screen bg-white">
+    <div className="flex min-h-screen flex-col bg-stripe">
       <header className="bg-brand text-white">
         <div className="mx-auto flex max-w-[1200px] items-center justify-between px-6 py-4">
           <h1 className="text-lg font-bold">教會服事排班</h1>
-          <div className="flex gap-2 text-sm">
+          <div className="flex items-center gap-2 text-sm">
+            <span className="tabular text-white/60">v{APP_VERSION}</span>
             <button
               type="button"
               disabled
+              title="Phase 3 接上"
               className="rounded-lg border border-white/40 px-3 py-1.5 opacity-50"
             >
               匯入
@@ -20,6 +44,7 @@ export default function App() {
             <button
               type="button"
               disabled
+              title="Phase 3 接上"
               className="rounded-lg border border-white/40 px-3 py-1.5 opacity-50"
             >
               匯出
@@ -28,35 +53,32 @@ export default function App() {
         </div>
       </header>
 
-      <nav className="border-b border-neutral-200 bg-stripe">
-        <ol className="mx-auto flex max-w-[1200px] flex-wrap gap-x-6 gap-y-2 px-6 py-3 text-sm">
-          {STEPS.map((step, i) => (
-            <li key={step.id} className="flex items-center gap-2">
-              <span
-                className={`flex h-6 w-6 items-center justify-center rounded-full text-xs ${
-                  i === 0 ? 'bg-brand text-white' : 'bg-white text-ink-muted ring-1 ring-neutral-300'
-                }`}
-              >
-                {i + 1}
-              </span>
-              <span className={i === 0 ? 'font-medium text-ink' : 'text-ink-muted'}>
-                {step.label}
-              </span>
-            </li>
-          ))}
-        </ol>
-      </nav>
+      <Nav />
+      <IssueBar />
 
-      <main className="mx-auto max-w-[1200px] px-6 py-10">
-        <div className="rounded-lg border border-neutral-200 p-6">
-          <h2 className="text-base font-bold">Phase 0 骨架</h2>
-          <p className="mt-2 text-sm text-ink-muted">
-            版面外殼、建置流程與 parity 測試已就緒。排班引擎與各步驟的輸入畫面依
-            <code className="mx-1 rounded bg-stripe px-1 py-0.5">docs/網頁版規格.md</code>
-            的分期依序接上。
-          </p>
-        </div>
+      <main className="mx-auto w-full max-w-[1200px] grow px-6 py-8">
+        {step === 'term' && <StepTerm />}
+        {step === 'roles' && <StepRoles />}
+        {step === 'members' && <StepMembers />}
+        {(step === 'unavailable' || step === 'constraints' || step === 'result') && (
+          <StepTodo step={step} />
+        )}
+
+        {!guideDone && (
+          <div className="mt-8 flex items-center justify-between">
+            <Button onClick={prevStep} disabled={index === 0}>
+              ← 上一步
+            </Button>
+            <Button tone="primary" onClick={nextStep}>
+              {skippable ? '跳過，下一步 →' : index === LAST_GUIDE_INDEX ? '完成 →' : '下一步 →'}
+            </Button>
+          </div>
+        )}
       </main>
+
+      <footer className="mx-auto w-full max-w-[1200px] px-6 py-6 text-xs text-ink-muted">
+        資料只存在這台裝置的瀏覽器裡，不會上傳到任何伺服器。
+      </footer>
     </div>
   );
 }
