@@ -196,7 +196,11 @@ export interface RosterWarning {
 
 export interface BlockedCandidate {
   memberId: MemberId;
-  /** null = 這個人其實可以排，是這個位置湊不滿 perWeek 才整個留空 */
+  /**
+   * null = 這個人其實排得上。0.3.6 改成「盡量填滿」之後紅色警告碰不到這個值
+   * （排得上就會被排進去，湊不成組合的人標 combination_blocked），橘色的偏好
+   * 警告則照舊會出現（規格 §7.11）。
+   */
   reason: BlockReason | null;
 }
 
@@ -214,7 +218,9 @@ export type BlockReason =
   | { kind: 'role_frequency_gap'; minGapWeeks: number }
   | { kind: 'forbidden_combination' }
   /** 成對位置專用：這個人本身排得上，但找不到配角 */
-  | { kind: 'no_partner'; roleId: RoleId };
+  | { kind: 'no_partner'; roleId: RoleId }
+  /** 部分填滿專用：這個人本身排得上，但跟已經排定的人湊不成合法組合（規格 §7.11） */
+  | { kind: 'combination_blocked' };
 
 export interface SoftViolation {
   date: IsoDate;

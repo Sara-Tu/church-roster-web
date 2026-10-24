@@ -49,10 +49,11 @@ describe('2. dual_role_exception', () => {
     expect(result.weeks[0].assignments).toEqual({ r1: ['m1'], r2: ['m1'] });
   });
 
-  it('不生效：沒有例外時只有一個人排不出成對角色', () => {
+  // 0.3.6 起配不出一對時各排各的（規格 §7.11）：r1 排得上就先排，r2 留空
+  it('不生效：沒有例外時只排得出成對角色的其中一個', () => {
     const result = runScheduler(makeProject({ ...parts, constraints: [onePerWeek()] }));
-    expect(result.weeks[0].assignments).toEqual({ r1: [], r2: [] });
-    expect(result.weeks[0].warnings.map((w) => w.code)).toEqual(['unfilled']);
+    expect(result.weeks[0].assignments).toEqual({ r1: ['m1'], r2: [] });
+    expect(result.weeks[0].warnings.map((w) => w.code)).toEqual(['partially_filled']);
   });
 });
 

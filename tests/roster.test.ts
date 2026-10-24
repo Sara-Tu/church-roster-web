@@ -67,10 +67,10 @@ describe('buildView 依週次', () => {
       members: [member('m1', ['r1'])],
       weeks: weeks(1),
     });
-    // 引擎是全有或全無（規格 §6.4.8），湊不滿整個位置就空著並留一筆警告
+    // 引擎盡量填滿（規格 §6.4.8、§7.11）：排得上一個就先排，剩下的位置留空並留一筆警告
     const view = buildView(project, runScheduler(project));
-    expect(view.weeks[0].cells[0].names).toEqual([]);
-    expect(view.weeks[0].cells[0].missing).toBe(2);
+    expect(view.weeks[0].cells[0].names).toEqual(['m1']);
+    expect(view.weeks[0].cells[0].missing).toBe(1);
     expect(view.warnings).toHaveLength(1);
   });
 

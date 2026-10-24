@@ -325,7 +325,6 @@ function warnings(
   const notes: RosterNote[] = [];
   for (const week of result.weeks) {
     for (const warning of week.warnings) {
-      const role = warning.roleId === null ? undefined : roleById.get(warning.roleId);
       notes.push({
         date: week.date,
         label: formatMd(week.date),
@@ -333,11 +332,9 @@ function warnings(
         message: warning.message,
         blocked: (warning.blocked ?? []).map((entry) => ({
           name: nameOf.get(entry.memberId) ?? entry.memberId,
-          reason: reasonText(
-            entry.reason,
-            roleById,
-            `排得上，但這個位置一次要 ${role?.perWeek ?? 1} 人，湊不滿所以整個留空`,
-          ),
+          // 「盡量填滿」之後紅色警告裡不會有排得上的人（排得上就被排進去了），
+          // 這句留著防引擎哪天分岔（規格 §7.11）
+          reason: reasonText(entry.reason, roleById, '排得上'),
           servable: entry.reason === null,
         })),
         groups: [],
@@ -435,6 +432,8 @@ function reasonText(
       return '和本週已經排到的人有「不能同一週」的規則';
     case 'no_partner':
       return `排得上，但找不到可以配的${labelOf(reason.roleId, roleById)}`;
+    case 'combination_blocked':
+      return '排得上，但跟這一週已經排定的人湊不成合法的組合';
   }
 }
 

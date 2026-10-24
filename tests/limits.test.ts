@@ -218,7 +218,8 @@ describe('pinnedSlots 的卡片文字與欄位檢查', () => {
 // ── 需求 4：排不出來的原因 ──────────────────────────────────────────────────
 
 describe('排不出來的原因', () => {
-  it('這天不行，另一個人其實排得上（是湊不滿才整個留空）', () => {
+  // 0.3.6 起排得上的人會先被排進去（規格 §7.11），所以名單上只剩真的卡住的人
+  it('這天不行的人列出原因，排得上的那個人已經先排進去了', () => {
     const result = runScheduler(
       makeProject({
         roles: [role('r1', { perWeek: 2 })],
@@ -226,9 +227,9 @@ describe('排不出來的原因', () => {
         weeks: weeks(1),
       }),
     );
+    expect(result.weeks[0].assignments.r1).toEqual(['m2']);
     expect(blockedOf(result, 0, 'r1')).toEqual([
       { memberId: 'm1', reason: { kind: 'unavailable' } },
-      { memberId: 'm2', reason: null },
     ]);
   });
 
@@ -320,18 +321,21 @@ describe('排不出來的原因', () => {
     expect(reasonOf(result, 0, 'r2', 'm2')).toEqual({ kind: 'forbidden_combination' });
   });
 
-  it('成對位置找不到配角', () => {
+  // `no_partner` 在 0.3.6 之後是防禦性的死路徑：成對位置配不出一對時會各排各的，
+  // 真的排得上的人一定被排掉了，剩下的人都有實際的原因（規格 §7.11）
+  it('成對位置兩個都排不上時，逐人列出原因', () => {
     const result = runScheduler(
       makeProject({
         roles: [role('r1', { pairsWith: 'r2' }), role('r2')],
-        members: [member('m1', ['r1'])],
+        members: [member('m1', ['r1'], [weekDate(0)])],
         weeks: weeks(1),
       }),
     );
-    expect(reasonOf(result, 0, 'r1', 'm1')).toEqual({ kind: 'no_partner', roleId: 'r2' });
+    expect(result.weeks[0].assignments).toEqual({ r1: [], r2: [] });
+    expect(reasonOf(result, 0, 'r1', 'm1')).toEqual({ kind: 'unavailable' });
   });
 
-  it('結果頁把原因翻成中文，排得上的人標示出來', () => {
+  it('結果頁把原因翻成中文', () => {
     const project = makeProject({
       roles: [{ ...role('r1', { perWeek: 2 }), name: '聖餐' }],
       members: [
@@ -341,13 +345,33 @@ describe('排不出來的原因', () => {
       weeks: weeks(1),
     });
     const view = buildView(project, runScheduler(project));
+    expect(view.weeks[0].cells[0].names).toEqual(['小華']);
+    expect(view.warnings[0].message).toBe('聖餐只排到 1 人（需要 2 人）');
     expect(view.warnings[0].blocked).toEqual([
       { name: '小明', reason: '這天不行', servable: false },
-      {
-        name: '小華',
-        reason: '排得上，但這個位置一次要 2 人，湊不滿所以整個留空',
-        servable: true,
-      },
+    ]);
+  });
+
+  it('結果頁翻出「湊不成組合」的原因', () => {
+    const project = makeProject({
+      roles: [{ ...role('r1', { perWeek: 3 }), name: '聖餐' }],
+      members: [
+        { ...member('m1', ['r1']), name: '小明' },
+        { ...member('m2', ['r1']), name: '小華' },
+      ],
+      weeks: weeks(1),
+      constraints: [
+        rule({
+          type: 'forbidden_together',
+          roleId: 'r1',
+          memberIds: ['m1', 'm2'],
+          mode: 'any_two',
+        }),
+      ],
+    });
+    const view = buildView(project, runScheduler(project));
+    expect(view.warnings[0].blocked).toEqual([
+      { name: '小華', reason: '排得上，但跟這一週已經排定的人湊不成合法的組合', servable: false },
     ]);
   });
 });

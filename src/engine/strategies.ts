@@ -5,7 +5,8 @@
  *   assignRotation  固定組合輪替（音控、招待）
  *   assignFill      單純填滿（聖餐）
  *
- * 三者都遵守「全有或全無」：湊不滿 perWeek 就整個角色留空並記 warning（§6.4.8）。
+ * 三者都「盡量填滿」：湊不滿 perWeek 時排得上幾個就排幾個，缺的位置留空並記
+ * partially_filled；一個人都排不上才整個留空並記 unfilled（§6.4.8、§7.11）。
  */
 
 import type { EngineContext } from './context';
@@ -17,6 +18,7 @@ import {
   violatesRoleCombinationWithin,
 } from './eligibility';
 import { leaderKey, stableSortBy, substituteKey, termCountKey } from './ordering';
+import type { SortKey } from './ordering';
 import type { RotationRule } from './rules';
 import type {
   BlockedCandidate,
@@ -91,6 +93,40 @@ function blockedList(
     memberId,
     reason: blockReason(ctx, memberId, role.id, aw.week.date, excluded, aw.week.assignments),
   }));
+}
+
+/**
+ * 只排到一部分（規格 §7.11）：排得上幾個就排幾個，缺的位置留空。
+ *
+ * `blocked` 一定要在 `commit()` 之前拍，而且要把排上去的人濾掉 —— 這張表回答的是
+ * 「剩下的空位為什麼沒人」，把剛排上去的人列進去只會混亂。
+ *
+ * 這條路徑不記橘色備註（沒有用到固定組合、動用最後手段人員）：紅色那一列的
+ * 「為什麼？」已經把整個人員池逐人列出來了，橘色在這裡只是重複。
+ */
+function commitPartial(
+  ctx: EngineContext,
+  aw: AssignContext,
+  role: Role,
+  picked: readonly MemberId[],
+): void {
+  // 沒被排上卻「排得上」的人，一定是跟排定的人湊不成合法組合 —— 不然
+  // largestCombination 會連他一起排進去（多一個人的組合就成立了）
+  const blocked = blockedList(ctx, aw, role)
+    .filter((entry) => !picked.includes(entry.memberId))
+    .map((entry) =>
+      entry.reason === null
+        ? { ...entry, reason: { kind: 'combination_blocked' } as BlockReason }
+        : entry,
+    );
+  commit(ctx, aw, role.id, picked);
+  warn(
+    aw,
+    role.id,
+    'partially_filled',
+    `${role.name}只排到 ${picked.length} 人（需要 ${role.perWeek} 人）`,
+    blocked,
+  );
 }
 
 /** 釘選值轉成 0 起算的「當月第幾次聚會」；-1 ＝ 當月最後一次 */
@@ -255,6 +291,23 @@ function pickCombination(
   return search(0) ? [...picked] : null;
 }
 
+/**
+ * 挑得出來的最大合法組合：先試 `need` 人，不行就一路往下試到 1 人（規格 §7.11）。
+ * 一個人自己不會違反「不能同一個位置」或「不能同一週」，所以候選人不是空的就
+ * 一定有答案。
+ */
+function largestCombination(
+  candidates: readonly MemberId[],
+  need: number,
+  accepts: (picked: readonly MemberId[], next: MemberId) => boolean,
+): MemberId[] | null {
+  for (let size = Math.min(need, candidates.length); size >= 1; size--) {
+    const picked = pickCombination(candidates, size, accepts);
+    if (picked !== null) return picked;
+  }
+  return null;
+}
+
 // ── 成對指派 ────────────────────────────────────────────────────────────────
 
 /**
@@ -358,13 +411,48 @@ export function assignCoupled(
     if (partnerId !== null && tryPair(leaderId, partnerId)) return;
   }
 
-  // 主角色排得上卻走到這裡，代表找不到配角
-  const blocked = blockedList(ctx, aw, leader).map((entry) =>
-    entry.reason === null
-      ? { ...entry, reason: { kind: 'no_partner', roleId: partner.id } as BlockReason }
-      : entry,
+  // ── 配不出一對：各排各的（規格 §7.11）────────────────────────────────────
+  // commit 的順序與 tryPair 一致（先主角色再配角），所以「連續兩週」的累計不變。
+  // 配角的資格在主角色排定之後才查，「本週已經排在主角色」這類原因會自然反映出來。
+  const fillOne = (role: Role, sortKey: (memberId: MemberId) => SortKey): boolean => {
+    const candidates = stableSortBy(
+      (ctx.pools.get(role.id) ?? []).filter((memberId) =>
+        canServe(ctx, memberId, role.id, date, excludedSet(ctx, aw), aw.week.assignments),
+      ),
+      sortKey,
+    );
+    const picked = candidates[0];
+    if (picked === undefined) return false;
+    commit(ctx, aw, role.id, [picked]);
+    return true;
+  };
+
+  const leaderFilled = fillOne(leader, leaderKey(ctx, leader.id, date));
+  const partnerFilled = fillOne(partner, termCountKey(ctx, partner.id));
+
+  if (leaderFilled && partnerFilled) return;
+
+  if (!leaderFilled && !partnerFilled) {
+    // 兩個都空：維持原本的訊息。這裡沒有人的 reason 會是 null（排得上就被 fillOne
+    // 排掉了），no_partner 的對應留著防 blockReason 與 canServe 哪天分岔
+    const blocked = blockedList(ctx, aw, leader).map((entry) =>
+      entry.reason === null
+        ? { ...entry, reason: { kind: 'no_partner', roleId: partner.id } as BlockReason }
+        : entry,
+    );
+    warn(aw, leader.id, 'unfilled', `無法排定${leader.name}/${partner.name}`, blocked);
+    return;
+  }
+
+  const empty = leaderFilled ? partner : leader;
+  const filled = leaderFilled ? leader : partner;
+  warn(
+    aw,
+    empty.id,
+    'partially_filled',
+    `無法排定${empty.name}（${filled.name}已排定）`,
+    blockedList(ctx, aw, empty),
   );
-  warn(aw, leader.id, 'unfilled', `無法排定${leader.name}/${partner.name}`, blocked);
 }
 
 function matchCoupledPair(
@@ -541,7 +629,19 @@ export function assignRotation(ctx: EngineContext, role: Role, aw: AssignContext
   );
 
   if (candidates.length < role.perWeek) {
-    warn(aw, role.id, 'unfilled', `無法排定${role.name}（人數不足）`, blockedList(ctx, aw, role));
+    // 所有固定組合都湊不滿，人員池也不夠：排得上幾個就排幾個（規格 §7.11）
+    const partial = largestCombination(
+      candidates,
+      candidates.length,
+      (picked, next) =>
+        !violatesForbiddenTogether(ctx, role.id, [...picked, next]) &&
+        !violatesRoleCombinationWithin(ctx, role.id, [...picked, next]),
+    );
+    if (partial === null) {
+      warn(aw, role.id, 'unfilled', `無法排定${role.name}（人數不足）`, blockedList(ctx, aw, role));
+    } else {
+      commitPartial(ctx, aw, role, partial);
+    }
     return;
   }
 
@@ -579,7 +679,19 @@ export function assignFill(ctx: EngineContext, role: Role, aw: AssignContext): v
   );
 
   if (candidates.length < role.perWeek) {
-    warn(aw, role.id, 'unfilled', `無法排定${role.name}（人數不足）`, blockedList(ctx, aw, role));
+    // 人數不夠就排得上幾個就排幾個，不整個留空（規格 §7.11）
+    const partial = largestCombination(
+      candidates,
+      candidates.length,
+      (chosen, next) =>
+        !violatesForbiddenTogether(ctx, role.id, [...chosen, next]) &&
+        !violatesRoleCombinationWithin(ctx, role.id, [...chosen, next]),
+    );
+    if (partial === null) {
+      warn(aw, role.id, 'unfilled', `無法排定${role.name}（人數不足）`, blockedList(ctx, aw, role));
+    } else {
+      commitPartial(ctx, aw, role, partial);
+    }
     return;
   }
 
