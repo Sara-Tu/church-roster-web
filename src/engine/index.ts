@@ -3,10 +3,12 @@
 export { runScheduler } from './run';
 export { ProjectValidationError, validateProject } from './context';
 export { SCHEMA_VERSION } from './schema';
-export { addDays, fromEpochDay, isIsoDate, toEpochDay, weekdayOf } from './dates';
+export { addDays, fromEpochDay, isIsoDate, monthOf, toEpochDay, weekdayOf } from './dates';
 export type {
   BlockedCandidate,
+  BlockedGroup,
   BlockReason,
+  GroupBlockReason,
   Constraint,
   ConstraintType,
   GoldenRoster,

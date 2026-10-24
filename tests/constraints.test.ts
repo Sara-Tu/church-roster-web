@@ -34,25 +34,26 @@ function base(): Project {
 const ALL_TYPES: ConstraintType[] = CONSTRAINT_META.map((meta) => meta.type);
 
 describe('CONSTRAINT_META', () => {
-  it('15 種型別，沒有重複，分成三組', () => {
-    expect(ALL_TYPES).toHaveLength(15);
-    expect(new Set(ALL_TYPES).size).toBe(15);
+  it('16 種型別，沒有重複，分成三組', () => {
+    expect(ALL_TYPES).toHaveLength(16);
+    expect(new Set(ALL_TYPES).size).toBe(16);
     const grouped = groupedMeta();
     expect(grouped.map((entry) => entry.group)).toEqual(['limits', 'pairing', 'rotation']);
   });
 
   it('基本規則不出現在「新增規則」裡', () => {
     const items = groupedMeta().flatMap((entry) => entry.items);
-    expect(items).toHaveLength(14);
+    expect(items).toHaveLength(15);
     expect(items.map((meta) => meta.type)).not.toContain('one_role_per_week');
     expect(BASIC_TYPES).toEqual(['one_role_per_week']);
     expect(isBasic('one_role_per_week')).toBe(true);
     expect(isBasic('dual_role_exception')).toBe(false);
   });
 
-  it('輪替、替補、偏好搭配預設是偏好規則，其他是硬性', () => {
+  it('最少排幾次、輪替、替補、偏好搭配預設是偏好規則，其他是硬性', () => {
     const soft = ALL_TYPES.filter((type) => !metaOf(type).defaultHard);
     expect(soft).toEqual([
+      'min_per_term',
       'substitute_priority',
       'preferred_role_combination',
       'rotation_groups',

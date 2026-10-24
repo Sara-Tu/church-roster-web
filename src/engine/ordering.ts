@@ -30,27 +30,59 @@ function order(ctx: EngineContext, memberId: MemberId): number {
   return ctx.memberOrder.get(memberId) ?? Number.MAX_SAFE_INTEGER;
 }
 
-/** 成對指派的主角色：服事次數少的優先，同分時距上次越久的優先 */
+/**
+ * 「最少排幾次」還差幾次（規格 §7.10.2）。三個排序 key 的第一格都是 `-shortfall`，
+ * 所以欠越多的人排越前面。
+ *
+ * 沒有人設下限時每個人都是 0，第一格全部相等，排序結果與加這個欄位之前逐格相同
+ * —— Excel golden 比對因此不受影響。
+ *
+ * 只看「所有位置合計」與這個位置本身的下限：為了湊足音控的次數而把人優先排進
+ * 領會，不會是使用者的本意。
+ */
+function shortfall(ctx: EngineContext, memberId: MemberId, roleId: RoleId): number {
+  let worst = 0;
+  for (const rule of ctx.rules.minPerTerm) {
+    if (rule.memberId !== memberId) continue;
+    if (rule.roleId !== null && rule.roleId !== roleId) continue;
+    const done =
+      rule.roleId === null
+        ? ctx.state.termTotalOf(memberId)
+        : ctx.state.termRoleOf(memberId, rule.roleId);
+    worst = Math.max(worst, rule.min - done);
+  }
+  return Math.max(0, worst);
+}
+
+/** 成對指派的主角色：還差幾次才達下限的優先，再比服事次數，同分時距上次越久的優先 */
 export function leaderKey(
   ctx: EngineContext,
   roleId: RoleId,
   date: IsoDate,
 ): (memberId: MemberId) => SortKey {
   return (memberId) => [
+    -shortfall(ctx, memberId, roleId),
     ctx.state.termRoleOf(memberId, roleId),
     -ctx.state.weeksSinceRole(memberId, roleId, date),
     order(ctx, memberId),
   ];
 }
 
-/** 成對指派的配角、以及單純填滿的角色：只看整梯次服事次數 */
+/** 成對指派的配角、以及單純填滿的角色：下限沒達標的優先，再看整梯次服事次數 */
 export function termCountKey(ctx: EngineContext, roleId: RoleId): (memberId: MemberId) => SortKey {
-  return (memberId) => [ctx.state.termRoleOf(memberId, roleId), order(ctx, memberId)];
+  return (memberId) => [
+    -shortfall(ctx, memberId, roleId),
+    ctx.state.termRoleOf(memberId, roleId),
+    order(ctx, memberId),
+  ];
 }
 
 /**
  * 輪替角色的替補與 fallback：
- * 最後手段的人排最後 → 指定優先的人排最前 → 本月該角色次數 → 整梯次該角色次數
+ * 最後手段的人排最後 → 下限沒達標的排最前 → 指定優先的人排最前 →
+ * 本月該角色次數 → 整梯次該角色次數
+ *
+ * 下限刻意排在「最後手段」之後：留到最後才找的人，不會因為欠次數就被提前。
  */
 export function substituteKey(
   ctx: EngineContext,
@@ -60,6 +92,7 @@ export function substituteKey(
   const rule = ctx.rules.substitutes.get(roleId);
   return (memberId) => [
     rule !== undefined && rule.lastResort.has(memberId) ? 1 : 0,
+    -shortfall(ctx, memberId, roleId),
     rule !== undefined && rule.prefer.has(memberId) ? 0 : 1,
     ctx.state.monthlyRoleOf(memberId, roleId, date),
     ctx.state.termRoleOf(memberId, roleId),

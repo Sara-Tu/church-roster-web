@@ -182,6 +182,11 @@ describe('§6.4.9 softViolations', () => {
         roleId: 'r1',
         code: 'rotation_substituted',
         message: 'r1的固定組合被拆開，由 m3 替補',
+        // 原本那一組的人分別卡在哪裡（規格 §7.10.1）
+        blocked: [
+          { memberId: 'm1', reason: null },
+          { memberId: 'm2', reason: { kind: 'unavailable' } },
+        ],
       },
     ]);
   });

@@ -1,4 +1,4 @@
-/** 15 種限制條件的欄位編輯器。規格 §5、§7.6.4 */
+/** 16 種限制條件的欄位編輯器。規格 §5、§7.6.4 */
 
 import { useState } from 'react';
 import type { Constraint, RoleSlot } from '../engine';
@@ -156,6 +156,33 @@ export function ConstraintEditor({
               value={constraint.max}
               onChange={(max) => onChange({ ...constraint, max })}
               suffix="次"
+            />
+          </EditorRow>
+        </>
+      );
+
+    case 'min_per_term':
+      return (
+        <>
+          <EditorRow title="誰">
+            <MemberPicker
+              value={constraint.memberId === '' ? null : constraint.memberId}
+              onChange={(value) => onChange({ ...constraint, memberId: value ?? '' })}
+            />
+          </EditorRow>
+          <EditorRow title="整梯次至少">
+            <NumberInput
+              min={1}
+              value={constraint.min}
+              onChange={(min) => onChange({ ...constraint, min })}
+              suffix="次"
+            />
+          </EditorRow>
+          <EditorRow title="只算哪個位置">
+            <RolePicker
+              value={constraint.roleId}
+              onChange={(roleId) => onChange({ ...constraint, roleId })}
+              nullLabel="所有位置合計"
             />
           </EditorRow>
         </>

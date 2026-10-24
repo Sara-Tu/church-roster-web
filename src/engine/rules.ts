@@ -46,6 +46,8 @@ export interface RuleIndex {
   maxPerMonth: { memberId: MemberId | null; roleId: RoleId | null; max: number }[];
   maxPerTermRole: { memberId: MemberId; roleId: RoleId; max: number }[];
   maxTotalPerTerm: { memberId: MemberId | null; max: number }[];
+  /** 下限（偏好）：roleId 為 null ＝ 所有位置合計。規格 §7.10.2 */
+  minPerTerm: { memberId: MemberId; roleId: RoleId | null; min: number }[];
   windows: Map<MemberId, AvailabilityWindow[]>;
   roleFrequency: Map<RoleId, RoleFrequencyRule>;
   rotation: Map<RoleId, RotationRule>;
@@ -66,6 +68,7 @@ export function indexConstraints(constraints: readonly Constraint[]): RuleIndex 
     maxPerMonth: [],
     maxPerTermRole: [],
     maxTotalPerTerm: [],
+    minPerTerm: [],
     windows: new Map(),
     roleFrequency: new Map(),
     rotation: new Map(),
@@ -116,6 +119,10 @@ export function indexConstraints(constraints: readonly Constraint[]): RuleIndex 
 
       case 'max_total_per_term':
         index.maxTotalPerTerm.push({ memberId: c.memberId, max: c.max });
+        break;
+
+      case 'min_per_term':
+        index.minPerTerm.push({ memberId: c.memberId, roleId: c.roleId, min: c.min });
         break;
 
       case 'availability_window': {

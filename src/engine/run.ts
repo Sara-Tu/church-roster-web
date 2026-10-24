@@ -62,11 +62,39 @@ export function runScheduler(project: Project): RosterResult {
     weeks.push(draft);
   }
 
+  reportMinPerTerm(ctx, weeks);
+
   return {
     weeks,
     softViolations: ctx.softViolations,
     fairness: { perMember: tally(ctx, weeks) },
   };
+}
+
+/**
+ * 「最少排幾次」要整梯次跑完才知道有沒有達標（規格 §7.10.2）。
+ * 日期記在最後一次聚會 —— 這是整個梯次結束時才成立的結論，不屬於某一週。
+ */
+function reportMinPerTerm(ctx: EngineContext, weeks: readonly RosterWeek[]): void {
+  const last = weeks[weeks.length - 1];
+  if (last === undefined) return;
+
+  for (const rule of ctx.rules.minPerTerm) {
+    const actual =
+      rule.roleId === null
+        ? ctx.state.termTotalOf(rule.memberId)
+        : ctx.state.termRoleOf(rule.memberId, rule.roleId);
+    if (actual >= rule.min) continue;
+
+    const name = ctx.memberById.get(rule.memberId)?.name ?? rule.memberId;
+    ctx.softViolations.push({
+      date: last.date,
+      // 位置名由結果頁的欄位顯示，訊息裡不再重複一次
+      roleId: rule.roleId,
+      code: 'min_per_term_missed',
+      message: `${name}整梯次只排到 ${actual} 次，設定是至少 ${rule.min} 次`,
+    });
+  }
 }
 
 function tally(ctx: EngineContext, weeks: readonly RosterWeek[]): MemberTally[] {

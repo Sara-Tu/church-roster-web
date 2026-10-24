@@ -294,13 +294,36 @@ function NotesCard({ view }: { view: RosterView }) {
           </ul>
         )}
         {view.soft.length > 0 && (
-          <ul className="flex flex-col gap-1 text-sm text-notice">
-            {view.soft.map((note, i) => (
-              <li key={`${note.date}-${i}`}>
-                <span className="tabular">{note.label}</span>
-                {note.roleName !== '' && ` ${note.roleName}`}：{note.message}
-              </li>
-            ))}
+          <ul className="flex flex-col gap-2 text-sm text-notice">
+            {view.soft.map((note, i) => {
+              // 前綴 s，才不會跟上面紅色警告的 key 撞在一起、一按兩邊一起展開
+              const key = `s-${note.date}-${i}`;
+              const hasWhy = note.blocked.length > 0 || note.groups.length > 0;
+              return (
+                <li key={key}>
+                  <span className="tabular">{note.label}</span>
+                  {note.roleName !== '' && ` ${note.roleName}`}：{note.message}
+                  {hasWhy && (
+                    <>
+                      {' '}
+                      <button
+                        type="button"
+                        className="underline underline-offset-2"
+                        onClick={() => setOpen(open === key ? null : key)}
+                      >
+                        {open === key ? '收起' : '為什麼？'}
+                      </button>
+                      {open === key &&
+                        (note.groups.length > 0 ? (
+                          <GroupTable note={note} />
+                        ) : (
+                          <BlockedTable note={note} />
+                        ))}
+                    </>
+                  )}
+                </li>
+              );
+            })}
           </ul>
         )}
       </div>
@@ -328,6 +351,35 @@ function BlockedTable({ note }: { note: RosterNote }) {
             <tr key={`${row.name}-${i}`} className={i % 2 === 0 ? 'bg-neutral-50' : ''}>
               <td className="whitespace-nowrap px-3 py-1.5">{row.name}</td>
               <td className={`px-3 py-1.5 ${row.servable ? 'text-notice' : 'text-ink-muted'}`}>
+                {row.reason}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+/** 輪替群組的每一組為什麼不能用在這一週（規格 §7.10.1） */
+function GroupTable({ note }: { note: RosterNote }) {
+  return (
+    <div className="mt-2 overflow-x-auto rounded-lg border border-neutral-200">
+      <table className="w-full border-collapse text-sm text-ink">
+        <thead>
+          <tr>
+            {/* 同 BlockedTable：在警告列底下展開的小表格不釘表頭 */}
+            <th className="bg-brand px-3 py-1.5 text-left font-medium text-white">組別</th>
+            <th className="bg-brand px-3 py-1.5 text-left font-medium text-white">成員</th>
+            <th className="bg-brand px-3 py-1.5 text-left font-medium text-white">為什麼沒用這一組</th>
+          </tr>
+        </thead>
+        <tbody>
+          {note.groups.map((row, i) => (
+            <tr key={row.label} className={i % 2 === 0 ? 'bg-neutral-50' : ''}>
+              <td className="whitespace-nowrap px-3 py-1.5">{row.label}</td>
+              <td className="px-3 py-1.5">{row.names}</td>
+              <td className={`px-3 py-1.5 ${row.used ? 'text-notice' : 'text-ink-muted'}`}>
                 {row.reason}
               </td>
             </tr>

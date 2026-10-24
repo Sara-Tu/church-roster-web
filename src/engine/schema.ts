@@ -116,6 +116,17 @@ export type Constraint =
       memberId: MemberId | null;
     })
   | (ConstraintBase & {
+      /**
+       * 下限，而且是偏好不是硬性：引擎把還沒達標的人排到候選名單最前面，
+       * 但不會為了湊數而違反任何上限。排完沒達標就記一筆 softViolation。見規格 §7.10.2
+       */
+      type: 'min_per_term';
+      memberId: MemberId;
+      min: number;
+      /** null = 所有位置合計 */
+      roleId: RoleId | null;
+    })
+  | (ConstraintBase & {
       type: 'availability_window';
       memberId: MemberId;
       from?: IsoDate;
@@ -210,7 +221,34 @@ export interface SoftViolation {
   roleId: RoleId | null;
   code: string;
   message: string;
+  /**
+   * 偏好沒排到的原因（規格 §7.10.1）。兩種形狀，因為四種偏好警告問的不是同一件事：
+   * 逐人（固定組合被拆開、動用最後手段人員）與逐組（沒用到固定組合、釘選的組沒輪到）。
+   * 只有網頁的結果頁會用，Excel 的警告工作表維持舊格式。
+   */
+  blocked?: BlockedCandidate[];
+  groups?: BlockedGroup[];
 }
+
+/** 輪替群組裡的某一組為什麼不能用在這一週 */
+export interface BlockedGroup {
+  /** 第幾組，從 0 起算（顯示時 +1） */
+  index: number;
+  members: MemberId[];
+  /** true = 本週用的就是這一組 */
+  used: boolean;
+  /** null = 這一組本來可以用，只是輪替順序還沒輪到它 */
+  reason: GroupBlockReason | null;
+}
+
+export type GroupBlockReason =
+  | { kind: 'too_consecutive'; max: number }
+  | { kind: 'forbidden_together' }
+  | { kind: 'forbidden_combination' }
+  /** 組裡能來的人不夠，替補也補不滿 */
+  | { kind: 'short_handed'; available: number; need: number }
+  /** 這一組釘在別的那次聚會 */
+  | { kind: 'pinned_elsewhere'; pin: number };
 
 export interface MemberTally {
   memberId: MemberId;

@@ -35,6 +35,7 @@ function mentionsRole(constraint: Constraint, roleId: RoleId): boolean {
     case 'required_pair':
       return constraint.a.roleId === roleId || constraint.b.roleId === roleId;
     case 'max_per_month':
+    case 'min_per_term':
       return constraint.roleId === roleId;
     case 'max_per_term_role':
     case 'role_frequency':
@@ -94,6 +95,7 @@ function withoutMember(constraint: Constraint, memberId: MemberId): Rewrite {
     case 'max_per_month':
     case 'max_per_term_role':
     case 'availability_window':
+    case 'min_per_term':
       return constraint.memberId === memberId ? { kind: 'remove' } : { kind: 'keep' };
 
     case 'max_total_per_term':

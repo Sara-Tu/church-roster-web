@@ -1,16 +1,17 @@
 /**
- * 步驟 5：15 種限制條件的中文說明、空白樣板、欄位檢查與 JSON 解析。規格 §5、§7.6.4。
+ * 步驟 5：16 種限制條件的中文說明、空白樣板、欄位檢查與 JSON 解析。規格 §5、§7.6.4。
  *
  * engine 的 validateProject 只查 id 參照對不對，欄位有沒有填完是 UI 的責任，
  * 所以這一層自己做形狀檢查，新增的規則一律留空並標紅，不自動填第一個人。
  */
 
-import { isIsoDate } from '../engine';
+import { isIsoDate, monthOf } from '../engine';
 import type {
   Constraint,
   ConstraintType,
   MemberId,
   Project,
+  Role,
   RoleId,
   RoleSlot,
 } from '../engine';
@@ -60,6 +61,13 @@ export const CONSTRAINT_META: readonly ConstraintMeta[] = [
     group: 'limits',
     hint: '不指定人就是套用到每一個人；指定人就只限那一個人。',
     defaultHard: true,
+  },
+  {
+    type: 'min_per_term',
+    label: '最少排幾次',
+    group: 'limits',
+    hint: '偏好規則：還沒排滿的人會被提到候選名單最前面，但不會為了湊數而違反任何上限。排完沒達標會在結果頁的警告裡標出來。',
+    defaultHard: false,
   },
   {
     type: 'role_frequency',
@@ -211,6 +219,8 @@ export function blankConstraint(type: ConstraintType, id: string): Constraint {
       return { ...base, type, memberId: '', roleId: '', max: 1 };
     case 'max_total_per_term':
       return { ...base, type, memberId: null, max: 10 };
+    case 'min_per_term':
+      return { ...base, type, memberId: '', min: 2, roleId: null };
     case 'availability_window':
       return { ...base, type, memberId: '' };
     case 'role_frequency':
@@ -318,6 +328,13 @@ export function describeConstraint(project: Project, constraint: Constraint): st
       return constraint.memberId === null
         ? `每人整梯次最多 ${constraint.max} 次`
         : `${memberName(project, constraint.memberId)} 整梯次最多 ${constraint.max} 次`;
+
+    case 'min_per_term':
+      return `${memberName(project, constraint.memberId)} 整梯次至少 ${constraint.min} 次${
+        constraint.roleId === null
+          ? '（所有位置合計）'
+          : `（只算 ${roleName(project, constraint.roleId)}）`
+      }`;
 
     case 'availability_window': {
       const who = memberName(project, constraint.memberId);
@@ -458,6 +475,13 @@ export function validateConstraint(project: Project, constraint: Constraint): st
       positive(constraint.max, '次數上限');
       break;
 
+    case 'min_per_term':
+      member(constraint.memberId);
+      positive(constraint.min, '最少次數');
+      if (constraint.roleId !== null) role(constraint.roleId);
+      issues.push(...minConflicts(project, constraint));
+      break;
+
     case 'availability_window':
       member(constraint.memberId);
       if (constraint.from === undefined && constraint.until === undefined) {
@@ -541,6 +565,141 @@ export function validateConstraint(project: Project, constraint: Constraint): st
 
   // 同一條規則裡同樣的毛病只講一次
   return [...new Set(issues)];
+}
+
+/** 這個梯次有幾個不同的月份。沿用引擎的語意：只看月份數字，不看年份 */
+function monthSpan(project: Project): number {
+  const months = new Set<number>();
+  for (const week of project.term.weeks) {
+    if (isIsoDate(week.date)) months.add(monthOf(week.date));
+  }
+  return months.size;
+}
+
+function roleOf(project: Project, roleId: RoleId): Role | undefined {
+  return project.roles.find((role) => role.id === roleId);
+}
+
+/** 這個位置適用幾週（只排在特殊週的位置就只算有標記的那幾週） */
+function weeksOf(project: Project, role: Role): number {
+  if (role.appliesTo.kind === 'all') return project.term.weeks.length;
+  const tagId = role.appliesTo.tagId;
+  return project.term.weeks.filter((week) => week.tags.includes(tagId)).length;
+}
+
+/** 這個位置整梯次總共有幾個名額：適用週數 × 每週人數 */
+function slotsOf(project: Project, role: Role): number {
+  return weeksOf(project, role) * Math.max(0, role.perWeek);
+}
+
+/**
+ * 「最少排幾次」與上限、名額打架的地方（規格 §7.10.3）。
+ *
+ * 下限是偏好、上限是硬性，所以打架一定是下限輸。與其讓使用者排完才看到一筆
+ * 沒達標的警告，不如在設定的當下就講明白是哪一條擋住的。
+ */
+function minConflicts(
+  project: Project,
+  constraint: Extract<Constraint, { type: 'min_per_term' }>,
+): string[] {
+  const issues: string[] = [];
+  const { memberId, min, roleId } = constraint;
+  if (memberId === '' || !Number.isInteger(min) || min < 1) return issues;
+
+  const clash = (other: Constraint, max: number, detail: string) => {
+    issues.push(`和「${describeConstraint(project, other)}」打架：${detail}（上限 ${max} 次）`);
+  };
+
+  for (const other of project.constraints) {
+    if (!other.enabled || other.id === constraint.id) continue;
+
+    switch (other.type) {
+      case 'max_total_per_term':
+        // 某個位置的次數也算進總次數，所以下限算不算位置都適用
+        if ((other.memberId === null || other.memberId === memberId) && min > other.max) {
+          clash(other, other.max, `最少 ${min} 次排不到`);
+        }
+        break;
+
+      case 'max_per_month': {
+        // 上限只算某個位置、下限卻是所有位置合計時推論不出來，跳過
+        const applies =
+          (other.memberId === null || other.memberId === memberId) &&
+          (other.roleId === null || other.roleId === roleId);
+        const months = monthSpan(project);
+        if (applies && months > 0 && min > other.max * months) {
+          clash(
+            other,
+            other.max,
+            `這個梯次有 ${months} 個月，最多只排得到 ${other.max * months} 次`,
+          );
+        }
+        break;
+      }
+
+      case 'max_per_term_role':
+        if (
+          roleId !== null &&
+          other.memberId === memberId &&
+          other.roleId === roleId &&
+          min > other.max
+        ) {
+          clash(other, other.max, `最少 ${min} 次排不到`);
+        }
+        break;
+
+      case 'role_frequency':
+        if (roleId !== null && other.roleId === roleId && min > other.maxPerTerm) {
+          clash(other, other.maxPerTerm, `最少 ${min} 次排不到`);
+        }
+        break;
+    }
+  }
+
+  // 同一個位置同一週不會排到同一個人兩次，所以一個人的上限就是適用的週數
+  const role = roleId === null ? undefined : roleOf(project, roleId);
+  if (roleId !== null && role !== undefined) {
+    const weeks = weeksOf(project, role);
+    if (weeks > 0 && min > weeks) {
+      issues.push(`${roleName(project, roleId)}整梯次只有 ${weeks} 週，排不到 ${min} 次`);
+    }
+  } else if (roleId === null) {
+    const basic = project.constraints.some(
+      (item) => item.enabled && item.type === 'one_role_per_week',
+    );
+    const cap = basic
+      ? project.term.weeks.length
+      : project.roles.reduce((sum, item) => sum + slotsOf(project, item), 0);
+    if (cap > 0 && min > cap) {
+      issues.push(
+        basic
+          ? `每人每週只排一個位置，整梯次只有 ${cap} 週，排不到 ${min} 次`
+          : `所有位置整梯次加起來只有 ${cap} 個名額，排不到 ${min} 次`,
+      );
+    }
+  }
+
+  // 這個位置的名額要夠所有人的下限分
+  const peers = project.constraints.filter(
+    (item): item is Extract<Constraint, { type: 'min_per_term' }> =>
+      item.enabled && item.type === 'min_per_term' && item.roleId === roleId,
+  );
+  if (peers.length > 1) {
+    const demand = peers.reduce((sum, item) => sum + Math.max(0, item.min), 0);
+    const capacity =
+      role !== undefined
+        ? slotsOf(project, role)
+        : project.roles.reduce((sum, item) => sum + slotsOf(project, item), 0);
+    if (capacity > 0 && demand > capacity) {
+      issues.push(
+        `${
+          role === undefined ? '所有位置' : roleName(project, role.id)
+        }整梯次只有 ${capacity} 個名額，${peers.length} 個人的下限加起來是 ${demand} 次`,
+      );
+    }
+  }
+
+  return issues;
 }
 
 export function invalidConstraintCount(project: Project): number {
@@ -691,6 +850,14 @@ function readConstraint(raw: Record<string, unknown>): ConstraintBody {
         memberId: str(raw, 'memberId'),
         roleId: str(raw, 'roleId'),
         max: int(raw, 'max'),
+      };
+    case 'min_per_term':
+      return {
+        type: 'min_per_term',
+        memberId: str(raw, 'memberId'),
+        min: int(raw, 'min'),
+        // 省略或 null ＝ 所有位置合計
+        roleId: raw.roleId === null || raw.roleId === undefined ? null : str(raw, 'roleId'),
       };
     case 'max_total_per_term':
       return {

@@ -17,9 +17,12 @@ import {
   violatesRoleCombinationWithin,
 } from './eligibility';
 import { leaderKey, stableSortBy, substituteKey, termCountKey } from './ordering';
+import type { RotationRule } from './rules';
 import type {
   BlockedCandidate,
+  BlockedGroup,
   BlockReason,
+  GroupBlockReason,
   MemberId,
   Role,
   RoleId,
@@ -101,8 +104,18 @@ function soft(
   roleId: RoleId,
   code: string,
   message: string,
+  extra?: { blocked?: BlockedCandidate[] | null; groups?: BlockedGroup[] },
 ): void {
-  ctx.softViolations.push({ date: aw.week.date, roleId, code, message });
+  ctx.softViolations.push({
+    date: aw.week.date,
+    roleId,
+    code,
+    message,
+    ...(extra?.blocked === undefined || extra.blocked === null
+      ? {}
+      : { blocked: extra.blocked }),
+    ...(extra?.groups === undefined ? {} : { groups: extra.groups }),
+  });
 }
 
 function nameOf(ctx: EngineContext, memberId: MemberId): string {
@@ -119,11 +132,30 @@ function allowsDualRole(
   return allowed !== undefined && allowed.has(first) && allowed.has(second);
 }
 
+/**
+ * 動用最後手段人員時，整個人員池分別卡在哪裡（規格 §7.10.1）。
+ * 一定要在 commit 之前呼叫，否則剛排上去的人會變成「本週已經排在別的位置」。
+ * 沒動用到最後手段就回 null，不白算。
+ */
+function lastResortSnapshot(
+  ctx: EngineContext,
+  aw: AssignContext,
+  role: Role,
+  picked: readonly MemberId[],
+): BlockedCandidate[] | null {
+  const rule = ctx.rules.substitutes.get(role.id);
+  if (rule === undefined || !picked.some((memberId) => rule.lastResort.has(memberId))) {
+    return null;
+  }
+  return blockedList(ctx, aw, role);
+}
+
 function reportLastResort(
   ctx: EngineContext,
   aw: AssignContext,
   role: Role,
   members: readonly MemberId[],
+  blocked: BlockedCandidate[] | null,
 ): void {
   const rule = ctx.rules.substitutes.get(role.id);
   if (rule === undefined) return;
@@ -135,9 +167,66 @@ function reportLastResort(
         role.id,
         'last_resort_used',
         `${role.name}動用了最後手段人員：${nameOf(ctx, memberId)}`,
+        { blocked },
       );
     }
   }
+}
+
+/**
+ * 輪替群組的每一組為什麼不能用在這一週（規格 §7.10.1）。
+ * 在挑組之前算，理由同上 —— 挑完再算，狀態已經被這一週的指派改掉了。
+ *
+ * 判斷順序與下面 `usable` 的 filter 一致，最後兩項（人不夠、釘在別週）是
+ * filter 擋不住、但實際上決定了這一組有沒有被用到的原因。
+ */
+function groupSnapshot(
+  ctx: EngineContext,
+  aw: AssignContext,
+  role: Role,
+  rotation: RotationRule,
+  context: { slot: number; lastSlot: number; maxConsecutive: number },
+): BlockedGroup[] {
+  return rotation.groups.map((members, index) => ({
+    index,
+    members: [...members],
+    used: false,
+    reason: groupReason(ctx, aw, role, rotation, context, members, index),
+  }));
+}
+
+function groupReason(
+  ctx: EngineContext,
+  aw: AssignContext,
+  role: Role,
+  rotation: RotationRule,
+  context: { slot: number; lastSlot: number; maxConsecutive: number },
+  members: readonly MemberId[],
+  index: number,
+): GroupBlockReason | null {
+  if (consecutiveSameGroup(aw.previousWeeks, role.id, members) >= context.maxConsecutive) {
+    return { kind: 'too_consecutive', max: context.maxConsecutive };
+  }
+  if (violatesForbiddenTogether(ctx, role.id, members)) return { kind: 'forbidden_together' };
+  if (violatesRoleCombinationWithin(ctx, role.id, members)) {
+    return { kind: 'forbidden_combination' };
+  }
+
+  const survivors: MemberId[] = [];
+  for (const memberId of members) {
+    if (canServe(ctx, memberId, role.id, aw.week.date, excludedSet(ctx, aw, survivors), aw.week.assignments)) {
+      survivors.push(memberId);
+    }
+  }
+  if (survivors.length < role.perWeek) {
+    return { kind: 'short_handed', available: survivors.length, need: role.perWeek };
+  }
+
+  const pin = rotation.pinnedSlots[index];
+  if (pin !== null && pin !== undefined && resolveSlot(pin, context.lastSlot) !== context.slot) {
+    return { kind: 'pinned_elsewhere', pin };
+  }
+  return null;
 }
 
 /**
@@ -318,6 +407,18 @@ export function assignRotation(ctx: EngineContext, role: Role, aw: AssignContext
   const pinnedIndex = pins.findIndex(
     (pin) => pin !== null && resolveSlot(pin, lastSlot) === slot,
   );
+  // 挑組之前先拍快照：出局理由必須在狀態被這一週的指派改掉之前算（規格 §7.10.1）
+  const snapshot =
+    rotation === undefined || rotation.groups.length === 0
+      ? []
+      : groupSnapshot(ctx, aw, role, rotation, { slot, lastSlot, maxConsecutive });
+
+  /** 標出本週實際用到的是哪一組，其餘維持出局理由 */
+  const groupsWith = (usedIndex: number | null): BlockedGroup[] =>
+    snapshot.map((group) =>
+      group.index === usedIndex ? { ...group, used: true, reason: null } : group,
+    );
+
   /** 釘選是偏好：本週該用的那一組沒用到就記一筆，不擋班表 */
   const notePin = (usedIndex: number | null): void => {
     if (pinnedIndex < 0 || usedIndex === pinnedIndex) return;
@@ -330,6 +431,7 @@ export function assignRotation(ctx: EngineContext, role: Role, aw: AssignContext
       `${role.name}第 ${pinnedIndex + 1} 組沒能排在${
         pin === -1 ? '當月最後一次聚會' : `當月第 ${pin} 次聚會`
       }`,
+      { groups: groupsWith(usedIndex) },
     );
   };
 
@@ -387,9 +489,10 @@ export function assignRotation(ctx: EngineContext, role: Role, aw: AssignContext
 
       if (survivors.length >= role.perWeek) {
         const picked = survivors.slice(0, role.perWeek);
+        const lastResort = lastResortSnapshot(ctx, aw, role, picked);
         commit(ctx, aw, role.id, picked);
         notePin(groupIndex);
-        reportLastResort(ctx, aw, role, picked);
+        reportLastResort(ctx, aw, role, picked, lastResort);
         return;
       }
 
@@ -401,6 +504,19 @@ export function assignRotation(ctx: EngineContext, role: Role, aw: AssignContext
       }
       if (picked.length < role.perWeek) continue;
 
+      // 原本這一組的人分別卡在哪裡（commit 之前算，理由同上）
+      const groupBlocked = group.map((memberId) => ({
+        memberId,
+        reason: blockReason(
+          ctx,
+          memberId,
+          role.id,
+          date,
+          excludedSet(ctx, aw),
+          aw.week.assignments,
+        ),
+      }));
+      const lastResort = lastResortSnapshot(ctx, aw, role, picked);
       commit(ctx, aw, role.id, picked);
       notePin(groupIndex);
       soft(
@@ -412,8 +528,9 @@ export function assignRotation(ctx: EngineContext, role: Role, aw: AssignContext
           .slice(survivors.length)
           .map((memberId) => nameOf(ctx, memberId))
           .join('、')} 替補`,
+        { blocked: groupBlocked },
       );
-      reportLastResort(ctx, aw, role, picked);
+      reportLastResort(ctx, aw, role, picked, lastResort);
       return;
     }
   }
@@ -440,10 +557,13 @@ export function assignRotation(ctx: EngineContext, role: Role, aw: AssignContext
   if (combination === null) {
     warn(aw, role.id, 'forbidden_pair_unavoidable', `${role.name}備用禁止配對無法迴避`);
   }
+  const lastResort = lastResortSnapshot(ctx, aw, role, picked);
   commit(ctx, aw, role.id, picked);
   notePin(null);
-  soft(ctx, aw, role.id, 'rotation_fallback', `${role.name}沒有用到固定組合，改從人員池挑人`);
-  reportLastResort(ctx, aw, role, picked);
+  soft(ctx, aw, role.id, 'rotation_fallback', `${role.name}沒有用到固定組合，改從人員池挑人`, {
+    groups: groupsWith(null),
+  });
+  reportLastResort(ctx, aw, role, picked, lastResort);
 }
 
 // ── 單純填滿 ────────────────────────────────────────────────────────────────
@@ -476,6 +596,7 @@ export function assignFill(ctx: EngineContext, role: Role, aw: AssignContext): v
   if (combination === null) {
     warn(aw, role.id, 'forbidden_pair_unavoidable', `${role.name}的禁止配對無法迴避`);
   }
+  const lastResort = lastResortSnapshot(ctx, aw, role, picked);
   commit(ctx, aw, role.id, picked);
-  reportLastResort(ctx, aw, role, picked);
+  reportLastResort(ctx, aw, role, picked, lastResort);
 }

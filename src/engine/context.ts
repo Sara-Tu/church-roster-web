@@ -223,6 +223,7 @@ function referencedMembers(constraint: Constraint): MemberId[] {
     case 'dual_role_exception':
     case 'max_per_term_role':
     case 'availability_window':
+    case 'min_per_term':
       return [constraint.memberId];
     // null ＝ 套用到每一個人，沒有要檢查的參照
     case 'max_per_month':
@@ -254,6 +255,7 @@ function referencedRoles(constraint: Constraint): RoleId[] {
     case 'required_pair':
       return [constraint.a.roleId, constraint.b.roleId];
     case 'max_per_month':
+    case 'min_per_term':
       return constraint.roleId === null ? [] : [constraint.roleId];
     case 'max_per_term_role':
     case 'role_frequency':

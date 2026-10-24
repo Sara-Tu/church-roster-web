@@ -8,6 +8,7 @@
 import { weekdayOf } from '../engine';
 import type {
   BlockReason,
+  GroupBlockReason,
   IsoDate,
   MemberId,
   Project,
@@ -95,8 +96,18 @@ export interface RosterNote {
   label: string;
   roleName: string;
   message: string;
-  /** 排不出來的警告才有：這個位置每一位有資格的人分別卡在哪裡（規格 §7.9.4） */
+  /** 這個位置每一位有資格的人分別卡在哪裡（規格 §7.9.4、§7.10.1） */
   blocked: BlockedRow[];
+  /** 輪替群組的每一組為什麼不能用在這一週（規格 §7.10.1） */
+  groups: BlockedGroupRow[];
+}
+
+export interface BlockedGroupRow {
+  label: string;
+  names: string;
+  reason: string;
+  /** true = 這一組就是本週用的那一組 */
+  used: boolean;
 }
 
 export interface BlockedRow {
@@ -160,7 +171,7 @@ export function buildView(project: Project, result: RosterResult): RosterView {
     ...monthly(project, result),
     spread: spread(project, result),
     warnings: warnings(result, roleById, nameOf),
-    soft: soft(result, roleById),
+    soft: soft(result, roleById, nameOf),
   };
 }
 
@@ -322,34 +333,80 @@ function warnings(
         message: warning.message,
         blocked: (warning.blocked ?? []).map((entry) => ({
           name: nameOf.get(entry.memberId) ?? entry.memberId,
-          reason: reasonText(entry.reason, roleById, role?.perWeek ?? 1),
+          reason: reasonText(
+            entry.reason,
+            roleById,
+            `排得上，但這個位置一次要 ${role?.perWeek ?? 1} 人，湊不滿所以整個留空`,
+          ),
           servable: entry.reason === null,
         })),
+        groups: [],
       });
     }
   }
   return notes;
 }
 
-function soft(result: RosterResult, roleById: Map<RoleId, Role>): RosterNote[] {
+function soft(
+  result: RosterResult,
+  roleById: Map<RoleId, Role>,
+  nameOf: Map<MemberId, string>,
+): RosterNote[] {
+  const who = (memberId: MemberId): string => nameOf.get(memberId) ?? memberId;
   return result.softViolations.map((violation) => ({
     date: violation.date,
     label: formatMd(violation.date),
     roleName: labelOf(violation.roleId, roleById),
     message: violation.message,
-    blocked: [],
+    blocked: (violation.blocked ?? []).map((entry) => ({
+      name: who(entry.memberId),
+      // 偏好警告裡「排得上」就只是排得上，不是紅色那種「湊不滿才整個留空」
+      reason: reasonText(entry.reason, roleById, '排得上'),
+      servable: entry.reason === null,
+    })),
+    groups: (violation.groups ?? []).map((group) => ({
+      label: `第 ${group.index + 1} 組`,
+      names: group.members.map(who).join('、'),
+      reason: group.used
+        ? '這一週用的就是這一組'
+        : group.reason === null
+          ? '可以用，只是輪替順序還沒輪到'
+          : groupReasonText(group.reason),
+      used: group.used,
+    })),
   }));
 }
 
-/** 把引擎的 BlockReason 翻成結果頁上直接看得懂的一句話（規格 §7.9.4） */
+/** 輪替群組出局的理由（規格 §7.10.1） */
+function groupReasonText(reason: GroupBlockReason): string {
+  switch (reason.kind) {
+    case 'too_consecutive':
+      return `同一組已經連續 ${reason.max} 週，不能再連下去`;
+    case 'forbidden_together':
+      return '這一組裡有人不能同一個位置';
+    case 'forbidden_combination':
+      return '這一組裡有人不能同一週服事';
+    case 'short_handed':
+      return `這一組只有 ${reason.available} 人能來，這個位置要 ${reason.need} 人`;
+    case 'pinned_elsewhere':
+      return `這一組固定在${pinText(reason.pin)}`;
+  }
+}
+
+function pinText(pin: number): string {
+  return pin === -1 ? '當月最後一次聚會' : `當月第 ${pin} 次聚會`;
+}
+
+/**
+ * 把引擎的 BlockReason 翻成結果頁上直接看得懂的一句話（規格 §7.9.4）。
+ * `nullText` 是「他其實排得上」的說法，紅色與橘色的語境不同，由呼叫端給。
+ */
 function reasonText(
   reason: BlockReason | null,
   roleById: Map<RoleId, Role>,
-  perWeek: number,
+  nullText: string,
 ): string {
-  if (reason === null) {
-    return `排得上，但這個位置一次要 ${perWeek} 人，湊不滿所以整個留空`;
-  }
+  if (reason === null) return nullText;
   switch (reason.kind) {
     case 'not_in_role':
       return '沒有這個位置的資格';
