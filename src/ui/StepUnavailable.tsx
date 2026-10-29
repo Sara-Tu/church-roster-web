@@ -5,8 +5,10 @@ import {
   buildAiPrompt,
   parseUnavailable,
   staleDates,
+  unavailableFilename,
   weekLoad,
 } from '../domain/unavailable';
+import { downloadBlob } from '../io/download';
 import type { ImportMode, ParsedUnavailable } from '../domain/unavailable';
 import { useAppStore } from '../store/project';
 import {
@@ -224,79 +226,112 @@ function MatrixCard() {
       {project.members.length === 0 ? (
         <Empty>還沒有人員。先回步驟 3 建立名單。</Empty>
       ) : (
-        <div className="max-h-[70vh] overflow-auto rounded-lg border border-neutral-200">
-          <table className="border-separate border-spacing-0 text-sm">
-            <thead>
-              <tr>
-                <th className="sticky left-0 top-0 z-20 min-w-32 border-b border-r border-neutral-200 bg-brand px-3 py-2 text-left font-medium text-white">
-                  姓名
-                </th>
-                {weeks.map((week) => {
-                  const special = tag !== undefined && week.tags.includes(tag.id);
+        <>
+          <UnavailableDownload />
+          <div className="max-h-[70vh] overflow-auto rounded-lg border border-neutral-200">
+            <table className="border-separate border-spacing-0 text-sm">
+              <thead>
+                <tr>
+                  <th className="sticky left-0 top-0 z-20 min-w-32 border-b border-r border-neutral-200 bg-brand px-3 py-2 text-left font-medium text-white">
+                    姓名
+                  </th>
+                  {weeks.map((week) => {
+                    const special = tag !== undefined && week.tags.includes(tag.id);
+                    return (
+                      <th
+                        key={week.date}
+                        title={`${week.date}${special ? `（${tag?.label}）` : ''}`}
+                        className={`tabular sticky top-0 z-10 w-12 border-b border-neutral-200 px-1 py-2 text-center font-medium ${
+                          special ? 'bg-communion text-ink' : 'bg-brand text-white'
+                        }`}
+                      >
+                        {week.date.slice(5).replace('-', '/')}
+                      </th>
+                    );
+                  })}
+                </tr>
+              </thead>
+              <tbody>
+                {project.members.map((member, index) => {
+                  const rowBg = index % 2 === 1 ? 'bg-stripe' : 'bg-white';
                   return (
-                    <th
-                      key={week.date}
-                      title={`${week.date}${special ? `（${tag?.label}）` : ''}`}
-                      className={`tabular sticky top-0 z-10 w-12 border-b border-neutral-200 px-1 py-2 text-center font-medium ${
-                        special ? 'bg-communion text-ink' : 'bg-brand text-white'
-                      }`}
-                    >
-                      {week.date.slice(5).replace('-', '/')}
-                    </th>
+                    <tr key={member.id}>
+                      <th
+                        className={`sticky left-0 z-10 min-w-32 border-b border-r border-neutral-200 px-3 py-1.5 text-left font-normal ${rowBg}`}
+                      >
+                        <span className="flex items-center justify-between gap-2">
+                          <span>{member.name.trim() === '' ? '（未命名）' : member.name}</span>
+                          <span className="flex items-center gap-1">
+                            {member.unavailable.length > 0 && (
+                              <>
+                                <span className="tabular text-xs text-ink-muted">
+                                  {member.unavailable.length}
+                                </span>
+                                <IconButton
+                                  label={`清掉 ${member.name} 的不行日期`}
+                                  onClick={() => clearMemberUnavailable(member.id)}
+                                >
+                                  ×
+                                </IconButton>
+                              </>
+                            )}
+                          </span>
+                        </span>
+                      </th>
+                      {weeks.map((week) => (
+                        <td
+                          key={week.date}
+                          className={`border-b border-neutral-100 px-1 py-1.5 text-center ${rowBg}`}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={member.unavailable.includes(week.date)}
+                            onChange={(event) =>
+                              toggleUnavailable(member.id, week.date, event.target.checked)
+                            }
+                            aria-label={`${member.name || '未命名'} ${week.date} 不行`}
+                          />
+                        </td>
+                      ))}
+                    </tr>
                   );
                 })}
-              </tr>
-            </thead>
-            <tbody>
-              {project.members.map((member, index) => {
-                const rowBg = index % 2 === 1 ? 'bg-stripe' : 'bg-white';
-                return (
-                  <tr key={member.id}>
-                    <th
-                      className={`sticky left-0 z-10 min-w-32 border-b border-r border-neutral-200 px-3 py-1.5 text-left font-normal ${rowBg}`}
-                    >
-                      <span className="flex items-center justify-between gap-2">
-                        <span>{member.name.trim() === '' ? '（未命名）' : member.name}</span>
-                        <span className="flex items-center gap-1">
-                          {member.unavailable.length > 0 && (
-                            <>
-                              <span className="tabular text-xs text-ink-muted">
-                                {member.unavailable.length}
-                              </span>
-                              <IconButton
-                                label={`清掉 ${member.name} 的不行日期`}
-                                onClick={() => clearMemberUnavailable(member.id)}
-                              >
-                                ×
-                              </IconButton>
-                            </>
-                          )}
-                        </span>
-                      </span>
-                    </th>
-                    {weeks.map((week) => (
-                      <td
-                        key={week.date}
-                        className={`border-b border-neutral-100 px-1 py-1.5 text-center ${rowBg}`}
-                      >
-                        <input
-                          type="checkbox"
-                          checked={member.unavailable.includes(week.date)}
-                          onChange={(event) =>
-                            toggleUnavailable(member.id, week.date, event.target.checked)
-                          }
-                          aria-label={`${member.name || '未命名'} ${week.date} 不行`}
-                        />
-                      </td>
-                    ))}
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
+              </tbody>
+            </table>
+          </div>
+        </>
       )}
     </Card>
+  );
+}
+
+/** 「人｜不行日期」兩欄的 Excel（規格 §7.12.7）。exceljs 按下去才載入 */
+function UnavailableDownload() {
+  const project = useAppStore((state) => state.project);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+
+  const download = async () => {
+    setBusy(true);
+    setError('');
+    try {
+      const { unavailableXlsx } = await import('../io/excel');
+      downloadBlob(unavailableFilename(project), await unavailableXlsx(project));
+    } catch {
+      setError('Excel 產生失敗，請再試一次。');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="mb-3 flex flex-wrap items-center gap-2">
+      <Button onClick={download} disabled={busy}>
+        {busy ? '產生中…' : '下載 Excel'}
+      </Button>
+      <span className="text-xs text-ink-muted">一人一列：人｜不行日期</span>
+      {error !== '' && <span className="text-xs text-alert">{error}</span>}
+    </div>
   );
 }
 

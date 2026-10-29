@@ -404,6 +404,9 @@ function reasonText(
   nullText: string,
 ): string {
   if (reason === null) return nullText;
+  // 預先扣掉了之後的指定服事才擋下來的，講明白（規格 §7.12.3）
+  const reserved = (text: string, count: number | undefined): string =>
+    count === undefined ? text : `${text}（含之後指定的 ${count} 次）`;
   switch (reason.kind) {
     case 'not_in_role':
       return '沒有這個位置的資格';
@@ -413,23 +416,32 @@ function reasonText(
         : `本週已經排在${labelOf(reason.roleId, roleById)}`;
     case 'unavailable':
       return '這天不行';
+    case 'pinned_dates_only':
+      return '設定了只排指定日期';
     case 'outside_window':
       return '不在可服事的日期範圍';
     case 'max_per_month':
-      return reason.roleId === null
-        ? `每月最多 ${reason.max} 次已經用完`
-        : `${labelOf(reason.roleId, roleById)}每月最多 ${reason.max} 次已經用完`;
+      return reserved(
+        reason.roleId === null
+          ? `每月最多 ${reason.max} 次已經用完`
+          : `${labelOf(reason.roleId, roleById)}每月最多 ${reason.max} 次已經用完`,
+        reason.reserved,
+      );
     case 'max_total_per_term':
-      return `整梯次最多 ${reason.max} 次已經用完`;
+      return reserved(`整梯次最多 ${reason.max} 次已經用完`, reason.reserved);
     case 'max_consecutive_weeks':
-      return `連續兩週服事已經達到上限 ${reason.max} 次`;
+      return reserved(`連續兩週服事已經達到上限 ${reason.max} 次`, reason.reserved);
     case 'max_per_term_role':
     case 'role_frequency_total':
-      return `這個位置整梯次最多 ${reason.max} 次已經用完`;
+      return reserved(`這個位置整梯次最多 ${reason.max} 次已經用完`, reason.reserved);
     case 'role_frequency_gap':
-      return `距上次排這個位置還沒滿 ${reason.minGapWeeks} 週`;
+      return reason.ahead === true
+        ? `跟之後指定的日期間隔不到 ${reason.minGapWeeks} 週`
+        : `距上次排這個位置還沒滿 ${reason.minGapWeeks} 週`;
     case 'forbidden_combination':
       return '和本週已經排到的人有「不能同一週」的規則';
+    case 'forbidden_together':
+      return '和這個位置已經排到的人有「不能同一個位置」的規則';
     case 'no_partner':
       return `排得上，但找不到可以配的${labelOf(reason.roleId, roleById)}`;
     case 'combination_blocked':

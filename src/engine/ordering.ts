@@ -8,6 +8,8 @@
  */
 
 import type { EngineContext } from './context';
+import { monthOf } from './dates';
+import { pinsAfter } from './pins';
 import type { IsoDate, MemberId, RoleId } from './schema';
 
 export type SortKey = number[];
@@ -31,6 +33,30 @@ function order(ctx: EngineContext, memberId: MemberId): number {
 }
 
 /**
+ * 有效次數＝已經排的次數＋之後還沒到的指定服事（規格 §7.12.3）。排序一律用這個，
+ * 指定很多次的人才不會在前面又被優先排。沒有指定時就是原本的次數。
+ */
+function termRoleCount(ctx: EngineContext, memberId: MemberId, roleId: RoleId, date: IsoDate): number {
+  return ctx.state.termRoleOf(memberId, roleId) + pinsAfter(ctx.rules.pins, memberId, date, { roleId });
+}
+
+function termTotalCount(ctx: EngineContext, memberId: MemberId, date: IsoDate): number {
+  return ctx.state.termTotalOf(memberId) + pinsAfter(ctx.rules.pins, memberId, date);
+}
+
+function monthlyRoleCount(
+  ctx: EngineContext,
+  memberId: MemberId,
+  roleId: RoleId,
+  date: IsoDate,
+): number {
+  return (
+    ctx.state.monthlyRoleOf(memberId, roleId, date) +
+    pinsAfter(ctx.rules.pins, memberId, date, { roleId, month: monthOf(date) })
+  );
+}
+
+/**
  * 「最少排幾次」還差幾次（規格 §7.10.2）。三個排序 key 的第一格都是 `-shortfall`，
  * 所以欠越多的人排越前面。
  *
@@ -40,15 +66,15 @@ function order(ctx: EngineContext, memberId: MemberId): number {
  * 只看「所有位置合計」與這個位置本身的下限：為了湊足音控的次數而把人優先排進
  * 領會，不會是使用者的本意。
  */
-function shortfall(ctx: EngineContext, memberId: MemberId, roleId: RoleId): number {
+function shortfall(ctx: EngineContext, memberId: MemberId, roleId: RoleId, date: IsoDate): number {
   let worst = 0;
   for (const rule of ctx.rules.minPerTerm) {
     if (rule.memberId !== memberId) continue;
     if (rule.roleId !== null && rule.roleId !== roleId) continue;
     const done =
       rule.roleId === null
-        ? ctx.state.termTotalOf(memberId)
-        : ctx.state.termRoleOf(memberId, rule.roleId);
+        ? termTotalCount(ctx, memberId, date)
+        : termRoleCount(ctx, memberId, rule.roleId, date);
     worst = Math.max(worst, rule.min - done);
   }
   return Math.max(0, worst);
@@ -61,18 +87,22 @@ export function leaderKey(
   date: IsoDate,
 ): (memberId: MemberId) => SortKey {
   return (memberId) => [
-    -shortfall(ctx, memberId, roleId),
-    ctx.state.termRoleOf(memberId, roleId),
+    -shortfall(ctx, memberId, roleId, date),
+    termRoleCount(ctx, memberId, roleId, date),
     -ctx.state.weeksSinceRole(memberId, roleId, date),
     order(ctx, memberId),
   ];
 }
 
 /** 成對指派的配角、以及單純填滿的角色：下限沒達標的優先，再看整梯次服事次數 */
-export function termCountKey(ctx: EngineContext, roleId: RoleId): (memberId: MemberId) => SortKey {
+export function termCountKey(
+  ctx: EngineContext,
+  roleId: RoleId,
+  date: IsoDate,
+): (memberId: MemberId) => SortKey {
   return (memberId) => [
-    -shortfall(ctx, memberId, roleId),
-    ctx.state.termRoleOf(memberId, roleId),
+    -shortfall(ctx, memberId, roleId, date),
+    termRoleCount(ctx, memberId, roleId, date),
     order(ctx, memberId),
   ];
 }
@@ -92,10 +122,10 @@ export function substituteKey(
   const rule = ctx.rules.substitutes.get(roleId);
   return (memberId) => [
     rule !== undefined && rule.lastResort.has(memberId) ? 1 : 0,
-    -shortfall(ctx, memberId, roleId),
+    -shortfall(ctx, memberId, roleId, date),
     rule !== undefined && rule.prefer.has(memberId) ? 0 : 1,
-    ctx.state.monthlyRoleOf(memberId, roleId, date),
-    ctx.state.termRoleOf(memberId, roleId),
+    monthlyRoleCount(ctx, memberId, roleId, date),
+    termRoleCount(ctx, memberId, roleId, date),
     order(ctx, memberId),
   ];
 }

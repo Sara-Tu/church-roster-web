@@ -45,6 +45,11 @@ export class SchedulerState {
     return previous !== undefined && daysBetween(previous, date) === 7;
   }
 
+  /** 這個人最後一次服事的日期（任何角色） */
+  lastServedOf(memberId: MemberId): IsoDate | undefined {
+    return this.lastServedAny.get(memberId);
+  }
+
   consecutiveOf(memberId: MemberId): number {
     return this.consecutiveCount.get(memberId) ?? 0;
   }

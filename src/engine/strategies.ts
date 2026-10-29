@@ -7,9 +7,12 @@
  *
  * 三者都「盡量填滿」：湊不滿 perWeek 時排得上幾個就排幾個，缺的位置留空並記
  * partially_filled；一個人都排不上才整個留空並記 unfilled（§6.4.8、§7.11）。
+ *
+ * 指定服事（§7.12）在每週一開始就由 commitPins 寫進班表，三種策略都只補剩下的
+ * 格子。沒有指定時 `pinnedIn` 一律是空陣列，每一條路徑都與原本相同。
  */
 
-import type { EngineContext } from './context';
+import { appliesToWeek, type EngineContext } from './context';
 import {
   blockReason,
   canServe,
@@ -29,6 +32,7 @@ import type {
   Role,
   RoleId,
   RosterWeek,
+  Week,
 } from './schema';
 
 export interface AssignContext {
@@ -60,7 +64,8 @@ function commit(
   roleId: RoleId,
   members: readonly MemberId[],
 ): void {
-  aw.week.assignments[roleId] = [...members];
+  // 接在指定服事的人後面（規格 §7.12.2）；沒有指定時這一格本來就是空的
+  aw.week.assignments[roleId] = [...(aw.week.assignments[roleId] ?? []), ...members];
   for (const memberId of members) {
     aw.assignedThisWeek.add(memberId);
     ctx.state.record(memberId, roleId, aw.week.date);
@@ -89,10 +94,35 @@ function blockedList(
   extra: readonly MemberId[] = [],
 ): BlockedCandidate[] {
   const excluded = excludedSet(ctx, aw, extra);
-  return (ctx.pools.get(role.id) ?? []).map((memberId) => ({
-    memberId,
-    reason: blockReason(ctx, memberId, role.id, aw.week.date, excluded, aw.week.assignments),
-  }));
+  // 已經排在這個位置的人（指定服事）不是「空位為什麼沒人」的答案
+  const already = pinnedIn(aw, role.id);
+  return (ctx.pools.get(role.id) ?? [])
+    .filter((memberId) => !already.includes(memberId))
+    .map((memberId) => ({
+      memberId,
+      reason: blockReason(ctx, memberId, role.id, aw.week.date, excluded, aw.week.assignments),
+    }));
+}
+
+/** 這個位置本週已經排定的人。commit 之前只會是指定服事的人（規格 §7.12.2） */
+function pinnedIn(aw: AssignContext, roleId: RoleId): MemberId[] {
+  return aw.week.assignments[roleId] ?? [];
+}
+
+/** 一個人都補不上。沒有指定服事時是原本的 unfilled；有指定的人就是只排到一部分 */
+function reportEmpty(ctx: EngineContext, aw: AssignContext, role: Role): void {
+  const pinned = pinnedIn(aw, role.id).length;
+  if (pinned === 0) {
+    warn(aw, role.id, 'unfilled', `無法排定${role.name}（人數不足）`, blockedList(ctx, aw, role));
+    return;
+  }
+  warn(
+    aw,
+    role.id,
+    'partially_filled',
+    `${role.name}只排到 ${pinned} 人（需要 ${role.perWeek} 人）`,
+    blockedList(ctx, aw, role),
+  );
 }
 
 /**
@@ -119,12 +149,13 @@ function commitPartial(
         ? { ...entry, reason: { kind: 'combination_blocked' } as BlockReason }
         : entry,
     );
+  const filled = pinnedIn(aw, role.id).length + picked.length;
   commit(ctx, aw, role.id, picked);
   warn(
     aw,
     role.id,
     'partially_filled',
-    `${role.name}只排到 ${picked.length} 人（需要 ${role.perWeek} 人）`,
+    `${role.name}只排到 ${filled} 人（需要 ${role.perWeek} 人）`,
     blocked,
   );
 }
@@ -266,6 +297,20 @@ function groupReason(
 }
 
 /**
+ * 一次挑多人時的組合檢查：「不能同一個位置」與「不能同一週」。已經指定在這個
+ * 位置的人一起算進去（規格 §7.12.2）
+ */
+function acceptsWith(
+  ctx: EngineContext,
+  role: Role,
+  pinned: readonly MemberId[],
+): (chosen: readonly MemberId[], next: MemberId) => boolean {
+  return (chosen, next) =>
+    !violatesForbiddenTogether(ctx, role.id, [...pinned, ...chosen, next]) &&
+    !violatesRoleCombinationWithin(ctx, role.id, [...pinned, ...chosen, next]);
+}
+
+/**
  * 依候選人順序找出第一組（字典順序最小）通過檢查的組合。
  * perWeek 為 2 時與現有引擎的雙重迴圈完全等價（`scheduler.py:295-299`）。
  */
@@ -308,6 +353,65 @@ function largestCombination(
   return null;
 }
 
+// ── 指定服事 ────────────────────────────────────────────────────────────────
+
+/**
+ * 每週一開始先把這一週的指定服事寫進班表（規格 §7.12.2）。指定優先：不經過資格
+ * 檢查一定排上，但照一般規則查一次（不預扣），查得到衝突就記一筆橘色提醒。
+ * 位置在這一週不排的指定直接略過 —— 卡片的欄位檢查已經擋過，這裡只是防呆。
+ */
+export function commitPins(ctx: EngineContext, aw: AssignContext, week: Week): void {
+  for (const pin of ctx.rules.pins.byDate.get(aw.week.date) ?? []) {
+    const role = ctx.roleById.get(pin.roleId);
+    if (role === undefined || !appliesToWeek(role, week)) continue;
+    const current = pinnedIn(aw, role.id);
+    if (current.includes(pin.memberId)) continue;
+
+    const reason = pinConflict(ctx, aw, pin.memberId, role.id, current);
+    commit(ctx, aw, role.id, [pin.memberId]);
+    if (reason !== null) {
+      soft(
+        ctx,
+        aw,
+        role.id,
+        'pinned_over_rule',
+        `指定${nameOf(ctx, pin.memberId)}擔任${role.name}，但違反了其他規則`,
+        { blocked: [{ memberId: pin.memberId, reason }] },
+      );
+    }
+  }
+}
+
+function pinConflict(
+  ctx: EngineContext,
+  aw: AssignContext,
+  memberId: MemberId,
+  roleId: RoleId,
+  current: readonly MemberId[],
+): BlockReason | null {
+  const excluded = excludedSet(ctx, aw);
+  // 同一天被指定到兩個位置、又有「可以同時擔任兩個位置」的例外，就不算衝突
+  for (const [otherRole, members] of Object.entries(aw.week.assignments)) {
+    if (members.includes(memberId) && allowsDualRole(ctx, memberId, otherRole, roleId)) {
+      excluded.delete(memberId);
+    }
+  }
+  const reason = blockReason(
+    ctx,
+    memberId,
+    roleId,
+    aw.week.date,
+    excluded,
+    aw.week.assignments,
+    'pin',
+  );
+  if (reason !== null) return reason;
+  if (violatesForbiddenTogether(ctx, roleId, [...current, memberId])) {
+    return { kind: 'forbidden_together' };
+  }
+  return null;
+}
+
 // ── 成對指派 ────────────────────────────────────────────────────────────────
 
 /**
@@ -325,6 +429,19 @@ export function assignCoupled(
   aw: AssignContext,
 ): void {
   const date = aw.week.date;
+
+  // 其中一格已經指定（規格 §7.12.2）：只補另一格
+  const pinnedLeader = pinnedIn(aw, leader.id)[0];
+  const pinnedPartner = pinnedIn(aw, partner.id)[0];
+  if (pinnedLeader !== undefined && pinnedPartner !== undefined) return;
+  if (pinnedLeader !== undefined) {
+    fillAround(ctx, aw, partner, leader, partnerChoices(ctx, aw, leader, partner, pinnedLeader));
+    return;
+  }
+  if (pinnedPartner !== undefined) {
+    fillAround(ctx, aw, leader, partner, leaderChoices(ctx, aw, leader, partner, pinnedPartner));
+    return;
+  }
 
   const tryPair = (leaderId: MemberId, partnerId: MemberId): boolean => {
     const samePerson = leaderId === partnerId;
@@ -405,7 +522,7 @@ export function assignCoupled(
           aw.week.assignments,
         ),
       );
-      partnerId = stableSortBy(candidates, termCountKey(ctx, partner.id))[0] ?? null;
+      partnerId = stableSortBy(candidates, termCountKey(ctx, partner.id, date))[0] ?? null;
     }
 
     if (partnerId !== null && tryPair(leaderId, partnerId)) return;
@@ -428,7 +545,7 @@ export function assignCoupled(
   };
 
   const leaderFilled = fillOne(leader, leaderKey(ctx, leader.id, date));
-  const partnerFilled = fillOne(partner, termCountKey(ctx, partner.id));
+  const partnerFilled = fillOne(partner, termCountKey(ctx, partner.id, date));
 
   if (leaderFilled && partnerFilled) return;
 
@@ -455,6 +572,110 @@ export function assignCoupled(
   );
 }
 
+interface Choice {
+  memberId: MemberId;
+  /** true = 跟已經指定的那一格是同一個人（一人兩職） */
+  dual: boolean;
+}
+
+/**
+ * 成對位置的其中一格已經指定了，另一格依序試 `choices`，第一個排得上的就排
+ * （規格 §7.12.2）。都排不上就照 §7.11 留空、記 partially_filled。
+ */
+function fillAround(
+  ctx: EngineContext,
+  aw: AssignContext,
+  empty: Role,
+  filled: Role,
+  choices: readonly Choice[],
+): void {
+  for (const { memberId, dual } of choices) {
+    const excluded = excludedSet(ctx, aw);
+    if (dual) excluded.delete(memberId);
+    if (canServe(ctx, memberId, empty.id, aw.week.date, excluded, aw.week.assignments)) {
+      commit(ctx, aw, empty.id, [memberId]);
+      return;
+    }
+  }
+  warn(
+    aw,
+    empty.id,
+    'partially_filled',
+    `無法排定${empty.name}（${filled.name}已排定）`,
+    blockedList(ctx, aw, empty),
+  );
+}
+
+/** 主角色已經指定：配角照原本的順序找 —— 固定搭檔 → 一人兩職 → 偏好搭配 → 次數最少 */
+function partnerChoices(
+  ctx: EngineContext,
+  aw: AssignContext,
+  leader: Role,
+  partner: Role,
+  leaderId: MemberId,
+): Choice[] {
+  const choices: Choice[] = [];
+  for (const pair of ctx.rules.requiredPairs) {
+    const slots = matchCoupledPair(pair, leader.id, partner.id);
+    if (slots !== null && slots.leaderMember === leaderId) {
+      choices.push({ memberId: slots.partnerMember, dual: slots.partnerMember === leaderId });
+    }
+  }
+  if (allowsDualRole(ctx, leaderId, leader.id, partner.id)) {
+    choices.push({ memberId: leaderId, dual: true });
+  }
+  for (const combo of ctx.rules.preferredCombos) {
+    if (
+      combo.when.memberId === leaderId &&
+      combo.when.roleId === leader.id &&
+      combo.prefer.roleId === partner.id
+    ) {
+      choices.push({ memberId: combo.prefer.memberId, dual: false });
+    }
+  }
+  const pool = stableSortBy(
+    ctx.pools.get(partner.id) ?? [],
+    termCountKey(ctx, partner.id, aw.week.date),
+  );
+  for (const memberId of pool) choices.push({ memberId, dual: false });
+  return choices;
+}
+
+/** 配角已經指定：主角色先找能跟他配的人，最後才照主角色原本的順序 */
+function leaderChoices(
+  ctx: EngineContext,
+  aw: AssignContext,
+  leader: Role,
+  partner: Role,
+  partnerId: MemberId,
+): Choice[] {
+  const choices: Choice[] = [];
+  for (const pair of ctx.rules.requiredPairs) {
+    const slots = matchCoupledPair(pair, leader.id, partner.id);
+    if (slots !== null && slots.partnerMember === partnerId) {
+      choices.push({ memberId: slots.leaderMember, dual: slots.leaderMember === partnerId });
+    }
+  }
+  if (allowsDualRole(ctx, partnerId, leader.id, partner.id)) {
+    choices.push({ memberId: partnerId, dual: true });
+  }
+  for (const combo of ctx.rules.preferredCombos) {
+    if (
+      combo.prefer.memberId === partnerId &&
+      combo.prefer.roleId === partner.id &&
+      combo.when.roleId === leader.id
+    ) {
+      choices.push({ memberId: combo.when.memberId, dual: false });
+    }
+  }
+  const pool = stableSortBy(
+    ctx.pools.get(leader.id) ?? [],
+    leaderKey(ctx, leader.id, aw.week.date),
+  );
+  for (const memberId of pool) choices.push({ memberId, dual: false });
+  return choices;
+}
+
 function matchCoupledPair(
   pair: { a: { memberId: MemberId; roleId: RoleId }; b: { memberId: MemberId; roleId: RoleId } },
   leaderRoleId: RoleId,
@@ -478,6 +699,8 @@ function matchCoupledPair(
  */
 export function assignRotation(ctx: EngineContext, role: Role, aw: AssignContext): void {
   const date = aw.week.date;
+  const pinned = pinnedIn(aw, role.id);
+  if (pinned.length >= role.perWeek) return;
   const rotation = ctx.rules.rotation.get(role.id);
   const maxConsecutive =
     ctx.rules.maxConsecutiveSameGroup.get(role.id) ?? Number.POSITIVE_INFINITY;
@@ -549,6 +772,10 @@ export function assignRotation(ctx: EngineContext, role: Role, aw: AssignContext
       rotated.push({ members: rotation.groups[index], index });
     }
 
+    // 含有指定服事的人的組排最前面（規格 §7.12.2）；沒有指定時這一格全部是 0
+    const pinnedHere = (members: readonly MemberId[]): number =>
+      -pinned.filter((memberId) => members.includes(memberId)).length;
+
     // 釘在本週的組排最前、沒釘的照輪替順序、釘在別週的壓到最後。
     // 一組都沒釘時每一組的名次都是 1，排序結果與加這個欄位之前完全相同。
     const pinRank = (index: number): number => {
@@ -565,18 +792,27 @@ export function assignRotation(ctx: EngineContext, role: Role, aw: AssignContext
           !violatesForbiddenTogether(ctx, role.id, members) &&
           !violatesRoleCombinationWithin(ctx, role.id, members),
       ),
-      ({ members, index }) => [pinRank(index), groupConsecutive(members)],
+      ({ members, index }) => [pinnedHere(members), pinRank(index), groupConsecutive(members)],
     );
 
     for (const { members: group, index: groupIndex } of usable) {
-      const survivors: MemberId[] = [];
+      // 指定的人先占位，其餘格子由組員補。組合本身已經查過，這裡多查一次是為了
+      // 指定的人 —— 沒有指定時這兩項永遠不會擋
+      const survivors: MemberId[] = [...pinned];
       for (const memberId of group) {
-        if (eligible(memberId, survivors)) survivors.push(memberId);
+        if (survivors.includes(memberId)) continue;
+        if (
+          eligible(memberId, survivors) &&
+          !violatesForbiddenTogether(ctx, role.id, [...survivors, memberId]) &&
+          !violatesRoleCombinationWithin(ctx, role.id, [...survivors, memberId])
+        ) {
+          survivors.push(memberId);
+        }
       }
-      if (survivors.length === 0) continue;
+      if (!survivors.some((memberId) => group.includes(memberId))) continue;
 
       if (survivors.length >= role.perWeek) {
-        const picked = survivors.slice(0, role.perWeek);
+        const picked = survivors.slice(pinned.length, role.perWeek);
         const lastResort = lastResortSnapshot(ctx, aw, role, picked);
         commit(ctx, aw, role.id, picked);
         notePin(groupIndex);
@@ -604,9 +840,11 @@ export function assignRotation(ctx: EngineContext, role: Role, aw: AssignContext
           aw.week.assignments,
         ),
       }));
-      const lastResort = lastResortSnapshot(ctx, aw, role, picked);
-      commit(ctx, aw, role.id, picked);
+      const added = picked.slice(pinned.length);
+      const lastResort = lastResortSnapshot(ctx, aw, role, added);
+      commit(ctx, aw, role.id, added);
       notePin(groupIndex);
+      // 指定的人不算替補（規格 §7.12.2）：替補只有 survivors 之後補進來的那些
       soft(
         ctx,
         aw,
@@ -618,42 +856,35 @@ export function assignRotation(ctx: EngineContext, role: Role, aw: AssignContext
           .join('、')} 替補`,
         { blocked: groupBlocked },
       );
-      reportLastResort(ctx, aw, role, picked, lastResort);
+      reportLastResort(ctx, aw, role, added, lastResort);
       return;
     }
   }
 
+  const need = role.perWeek - pinned.length;
+  const accepts = acceptsWith(ctx, role, pinned);
   const candidates = stableSortBy(
-    (ctx.pools.get(role.id) ?? []).filter((memberId) => eligible(memberId, [])),
+    (ctx.pools.get(role.id) ?? []).filter(
+      (memberId) => !pinned.includes(memberId) && eligible(memberId, []),
+    ),
     substituteKey(ctx, role.id, date),
   );
 
-  if (candidates.length < role.perWeek) {
-    // 所有固定組合都湊不滿，人員池也不夠：排得上幾個就排幾個（規格 §7.11）
-    const partial = largestCombination(
-      candidates,
-      candidates.length,
-      (picked, next) =>
-        !violatesForbiddenTogether(ctx, role.id, [...picked, next]) &&
-        !violatesRoleCombinationWithin(ctx, role.id, [...picked, next]),
-    );
+  const combination =
+    candidates.length < need ? null : pickCombination(candidates, need, accepts);
+  if (candidates.length < need || (combination === null && pinned.length > 0)) {
+    // 所有固定組合都湊不滿，人員池也不夠：排得上幾個就排幾個（規格 §7.11）。
+    // 有指定服事時，湊不成合法組合也走這裡，不把違規的組合硬排上去
+    const partial = largestCombination(candidates, need, accepts);
     if (partial === null) {
-      warn(aw, role.id, 'unfilled', `無法排定${role.name}（人數不足）`, blockedList(ctx, aw, role));
+      reportEmpty(ctx, aw, role);
     } else {
       commitPartial(ctx, aw, role, partial);
     }
     return;
   }
 
-  const combination = pickCombination(
-    candidates,
-    role.perWeek,
-    (picked, next) =>
-      !violatesForbiddenTogether(ctx, role.id, [...picked, next]) &&
-      !violatesRoleCombinationWithin(ctx, role.id, [...picked, next]),
-  );
-
-  const picked = combination ?? candidates.slice(0, role.perWeek);
+  const picked = combination ?? candidates.slice(0, need);
   if (combination === null) {
     warn(aw, role.id, 'forbidden_pair_unavoidable', `${role.name}備用禁止配對無法迴避`);
   }
@@ -671,40 +902,37 @@ export function assignRotation(ctx: EngineContext, role: Role, aw: AssignContext
 /** 對應 `scheduler.py:_assign_聖餐`：沒有固定組合，服事次數最少的人優先 */
 export function assignFill(ctx: EngineContext, role: Role, aw: AssignContext): void {
   const date = aw.week.date;
+  const pinned = pinnedIn(aw, role.id);
+  const need = role.perWeek - pinned.length;
+  if (need <= 0) return;
+
   const candidates = stableSortBy(
-    (ctx.pools.get(role.id) ?? []).filter((memberId) =>
-      canServe(ctx, memberId, role.id, date, excludedSet(ctx, aw), aw.week.assignments),
+    (ctx.pools.get(role.id) ?? []).filter(
+      (memberId) =>
+        !pinned.includes(memberId) &&
+        canServe(ctx, memberId, role.id, date, excludedSet(ctx, aw), aw.week.assignments),
     ),
-    termCountKey(ctx, role.id),
+    termCountKey(ctx, role.id, date),
   );
 
-  if (candidates.length < role.perWeek) {
-    // 人數不夠就排得上幾個就排幾個，不整個留空（規格 §7.11）
-    const partial = largestCombination(
-      candidates,
-      candidates.length,
-      (chosen, next) =>
-        !violatesForbiddenTogether(ctx, role.id, [...chosen, next]) &&
-        !violatesRoleCombinationWithin(ctx, role.id, [...chosen, next]),
-    );
+  // 這裡的人選也是一次挑完的，所以組合本身要查過才算數（規格 §7.7.3）
+  const accepts = acceptsWith(ctx, role, pinned);
+  const combination =
+    candidates.length < need ? null : pickCombination(candidates, need, accepts);
+
+  if (candidates.length < need || (combination === null && pinned.length > 0)) {
+    // 人數不夠就排得上幾個就排幾個，不整個留空（規格 §7.11）。
+    // 有指定服事時，湊不成合法組合也走這裡，不把違規的組合硬排上去
+    const partial = largestCombination(candidates, need, accepts);
     if (partial === null) {
-      warn(aw, role.id, 'unfilled', `無法排定${role.name}（人數不足）`, blockedList(ctx, aw, role));
+      reportEmpty(ctx, aw, role);
     } else {
       commitPartial(ctx, aw, role, partial);
     }
     return;
   }
 
-  // 這裡的人選也是一次挑完的，所以組合本身要查過才算數（規格 §7.7.3）
-  const combination = pickCombination(
-    candidates,
-    role.perWeek,
-    (chosen, next) =>
-      !violatesForbiddenTogether(ctx, role.id, [...chosen, next]) &&
-      !violatesRoleCombinationWithin(ctx, role.id, [...chosen, next]),
-  );
-
-  const picked = combination ?? candidates.slice(0, role.perWeek);
+  const picked = combination ?? candidates.slice(0, need);
   if (combination === null) {
     warn(aw, role.id, 'forbidden_pair_unavoidable', `${role.name}的禁止配對無法迴避`);
   }

@@ -46,13 +46,32 @@ function mentionsRole(constraint: Constraint, roleId: RoleId): boolean {
       return constraint.roleId === roleId;
     case 'preferred_role_combination':
       return constraint.when.roleId === roleId || constraint.prefer.roleId === roleId;
+    case 'fixed_assignment':
+      // 「限制哪些位置」只是附帶的名單，交給 withoutRole 改寫
+      return constraint.roleId === roleId;
   }
 }
 
+/**
+ * 刪掉位置之後還留著的規則要不要改寫。目前只有指定服事的「限制哪些位置」
+ * （規格 §7.12.6）：拿掉那個位置；拿到變成空的就改回「照常排」——
+ * 空陣列代表所有位置，直接留空會讓限制變得更大。
+ */
+function withoutRole(constraint: Constraint, roleId: RoleId): Constraint | null {
+  if (constraint.type !== 'fixed_assignment' || !constraint.onlyRoleIds.includes(roleId)) {
+    return null;
+  }
+  const onlyRoleIds = constraint.onlyRoleIds.filter((id) => id !== roleId);
+  return onlyRoleIds.length === 0
+    ? { ...constraint, onlyRoleIds, onlyPinnedDates: false }
+    : { ...constraint, onlyRoleIds };
+}
+
 export function roleRemovalImpact(project: Project, roleId: RoleId): CascadeImpact {
+  const kept = project.constraints.filter((constraint) => !mentionsRole(constraint, roleId));
   return {
-    removed: project.constraints.filter((constraint) => mentionsRole(constraint, roleId)).length,
-    modified: 0,
+    removed: project.constraints.length - kept.length,
+    modified: kept.filter((constraint) => withoutRole(constraint, roleId) !== null).length,
   };
 }
 
@@ -69,9 +88,9 @@ export function removeRole(project: Project, roleId: RoleId): Project {
         ? { ...member, roles: member.roles.filter((id) => id !== roleId) }
         : member,
     ),
-    constraints: project.constraints.filter(
-      (constraint) => !mentionsRole(constraint, roleId),
-    ),
+    constraints: project.constraints
+      .filter((constraint) => !mentionsRole(constraint, roleId))
+      .map((constraint) => withoutRole(constraint, roleId) ?? constraint),
   };
 }
 
@@ -96,6 +115,7 @@ function withoutMember(constraint: Constraint, memberId: MemberId): Rewrite {
     case 'max_per_term_role':
     case 'availability_window':
     case 'min_per_term':
+    case 'fixed_assignment':
       return constraint.memberId === memberId ? { kind: 'remove' } : { kind: 'keep' };
 
     case 'max_total_per_term':

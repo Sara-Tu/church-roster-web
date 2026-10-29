@@ -270,3 +270,32 @@ export function staleDates(project: Project): { memberId: MemberId; name: string
   }
   return groups;
 }
+
+// ── 不行日期的 Excel（規格 §7.12.7）─────────────────────────────────────────
+
+export interface UnavailableRow {
+  name: string;
+  /** MM/DD，依日期排序，用「、」隔開；沒有就是空字串 */
+  dates: string;
+}
+
+/**
+ * 一人一列，依人員清單的順序全部列出 —— 沒有不行日期的人第二欄留空，看得出
+ * 誰整個梯次都可以。只列本梯次的聚會日，梯次改過之後留下來的舊日期不算。
+ */
+export function unavailableRows(project: Project): UnavailableRow[] {
+  const meetings = new Set(project.term.weeks.map((week) => week.date));
+  return project.members.map((member) => ({
+    name: member.name.trim() === '' ? '（未命名）' : member.name,
+    dates: member.unavailable
+      .filter((date) => meetings.has(date))
+      .sort()
+      .map((date) => `${date.slice(5, 7)}/${date.slice(8, 10)}`)
+      .join('、'),
+  }));
+}
+
+export function unavailableFilename(project: Project): string {
+  const name = project.term.name.trim().replace(/[\\/:*?"<>|\s]+/g, '-');
+  return `不行日期${name === '' ? '' : `_${name}`}.xlsx`;
+}

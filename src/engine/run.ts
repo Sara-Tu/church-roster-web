@@ -2,6 +2,7 @@
  * 主迴圈。規格 §6.4.4：
  *
  *   每一週（依 term.weeks 陣列順序）
+ *     先寫入這一週的指定服事（§7.12.2）
  *     每一個角色（依 roles 陣列順序）
  *       被前一個角色成對排掉 → 跳過
  *       appliesTo 不符當週標籤 → 跳過
@@ -11,7 +12,13 @@
  */
 
 import { appliesToWeek, createContext, validateProject, type EngineContext } from './context';
-import { assignCoupled, assignFill, assignRotation, type AssignContext } from './strategies';
+import {
+  assignCoupled,
+  assignFill,
+  assignRotation,
+  commitPins,
+  type AssignContext,
+} from './strategies';
 import type {
   MemberTally,
   Project,
@@ -39,6 +46,9 @@ export function runScheduler(project: Project): RosterResult {
     };
     const handled = new Set<RoleId>();
 
+    // 指定服事先寫進班表，各位置再補剩下的格子（規格 §7.12.2）
+    commitPins(ctx, aw, week);
+
     for (const role of project.roles) {
       if (handled.has(role.id)) continue;
       if (!appliesToWeek(role, week)) continue;
@@ -46,10 +56,10 @@ export function runScheduler(project: Project): RosterResult {
       const partner =
         role.pairsWith !== undefined ? ctx.roleById.get(role.pairsWith) : undefined;
 
-      draft.assignments[role.id] = [];
+      draft.assignments[role.id] = draft.assignments[role.id] ?? [];
 
       if (partner !== undefined && appliesToWeek(partner, week)) {
-        draft.assignments[partner.id] = [];
+        draft.assignments[partner.id] = draft.assignments[partner.id] ?? [];
         handled.add(partner.id);
         assignCoupled(ctx, role, partner, aw);
       } else if (ctx.rules.rotation.has(role.id)) {

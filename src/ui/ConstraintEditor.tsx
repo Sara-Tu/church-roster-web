@@ -1,11 +1,19 @@
-/** 16 種限制條件的欄位編輯器。規格 §5、§7.6.4 */
+/** 17 種限制條件的欄位編輯器。規格 §5、§7.6.4 */
 
 import { useState } from 'react';
 import type { Constraint, RoleSlot } from '../engine';
 import { pinnedSlotLabel } from '../domain/constraints';
 import { useAppStore } from '../store/project';
 import { Button, IconButton, INPUT_CLASS } from './parts';
-import { EditorRow, MemberChips, MemberPicker, NumberInput, RoleChips, RolePicker } from './pickers';
+import {
+  Chip,
+  EditorRow,
+  MemberChips,
+  MemberPicker,
+  NumberInput,
+  RoleChips,
+  RolePicker,
+} from './pickers';
 
 export function ConstraintEditor({
   constraint,
@@ -345,7 +353,124 @@ export function ConstraintEditor({
           />
         </>
       );
+
+    case 'fixed_assignment':
+      return <FixedAssignmentEditor constraint={constraint} onChange={onChange} />;
   }
+}
+
+/**
+ * 指定服事（規格 §7.12.1）：人 → 位置 → 日期 → 指定日期以外照常排／不排。
+ * 位置只列這個人有登記的；日期只列這個位置會排的聚會日。已經勾了、但現在
+ * 不在清單裡的日期（梯次改過）用紅框留著，讓使用者自己拿掉。
+ */
+function FixedAssignmentEditor({
+  constraint,
+  onChange,
+}: {
+  constraint: Extract<Constraint, { type: 'fixed_assignment' }>;
+  onChange: (next: Constraint) => void;
+}) {
+  const project = useAppStore((state) => state.project);
+  const person = project.members.find((member) => member.id === constraint.memberId);
+  const roles =
+    person === undefined
+      ? project.roles
+      : project.roles.filter((role) => person.roles.includes(role.id));
+  const role = project.roles.find((item) => item.id === constraint.roleId);
+  const tagLabel = new Map(project.weekTags.map((tag) => [tag.id, tag.label]));
+  const weeks = project.term.weeks.filter(
+    (week) => role?.appliesTo.kind !== 'weekTag' || week.tags.includes(role.appliesTo.tagId),
+  );
+  const listed = new Set(weeks.map((week) => week.date));
+  const stale = constraint.dates.filter((date) => !listed.has(date)).sort();
+  const md = (date: string) => `${date.slice(5, 7)}/${date.slice(8, 10)}`;
+
+  const toggle = (date: string) =>
+    onChange({
+      ...constraint,
+      dates: constraint.dates.includes(date)
+        ? constraint.dates.filter((item) => item !== date)
+        : [...constraint.dates, date].sort(),
+    });
+
+  return (
+    <>
+      <EditorRow title="誰">
+        <MemberPicker
+          value={constraint.memberId === '' ? null : constraint.memberId}
+          onChange={(value) => onChange({ ...constraint, memberId: value ?? '' })}
+        />
+      </EditorRow>
+      <EditorRow title="擔任哪個位置" hint={person === undefined ? undefined : '只列出這個人有登記的位置'}>
+        <select
+          className={`${INPUT_CLASS} max-w-44`}
+          value={constraint.roleId}
+          onChange={(event) => onChange({ ...constraint, roleId: event.target.value })}
+          aria-label="選服事位置"
+        >
+          <option value="">請選位置</option>
+          {roles.map((item) => (
+            <option key={item.id} value={item.id}>
+              {item.name.trim() === '' ? '（未命名）' : item.name}
+            </option>
+          ))}
+        </select>
+      </EditorRow>
+      <EditorRow title="哪幾天（可以複選）">
+        {weeks.length === 0 ? (
+          <span className="text-xs text-ink-muted">還沒有聚會日，先回步驟 1 產生。</span>
+        ) : (
+          weeks.map((week) => {
+            const labels = week.tags.map((id) => tagLabel.get(id)).filter(Boolean);
+            return (
+              <Chip
+                key={week.date}
+                on={constraint.dates.includes(week.date)}
+                onClick={() => toggle(week.date)}
+              >
+                <span className="tabular">{md(week.date)}</span>
+                {labels.length > 0 && <span className="ml-1">{labels.join('、')}</span>}
+              </Chip>
+            );
+          })
+        )}
+        {stale.map((date) => (
+          <button
+            key={date}
+            type="button"
+            onClick={() => toggle(date)}
+            title="這一天現在不是這個位置會排的聚會日，點一下拿掉"
+            className="rounded-full border border-alert px-2.5 py-1 text-xs text-alert"
+          >
+            <span className="tabular">{md(date)}</span> ✕
+          </button>
+        ))}
+      </EditorRow>
+      <EditorRow title="指定日期以外">
+        <Chip
+          on={!constraint.onlyPinnedDates}
+          onClick={() => onChange({ ...constraint, onlyPinnedDates: false })}
+        >
+          照常排
+        </Chip>
+        <Chip
+          on={constraint.onlyPinnedDates}
+          onClick={() => onChange({ ...constraint, onlyPinnedDates: true })}
+        >
+          不排
+        </Chip>
+      </EditorRow>
+      {constraint.onlyPinnedDates && (
+        <EditorRow title="限制哪些位置" hint="留空＝所有位置">
+          <RoleChips
+            selected={constraint.onlyRoleIds}
+            onChange={(onlyRoleIds) => onChange({ ...constraint, onlyRoleIds })}
+          />
+        </EditorRow>
+      )}
+    </>
+  );
 }
 
 function SlotRow({

@@ -6,6 +6,7 @@
  * max_consecutive_weeks_per_member。同一個角色重複設定時，後面的會被忽略。
  */
 
+import { addPins, emptyPinIndex, type PinIndex } from './pins';
 import type { Constraint, IsoDate, MemberId, RoleId, RoleSlot } from './schema';
 
 export interface RoleFrequencyRule {
@@ -57,6 +58,8 @@ export interface RuleIndex {
   forbiddenTogether: Map<RoleId, Set<MemberId>[]>;
   substitutes: Map<RoleId, SubstituteRule>;
   preferredCombos: { when: RoleSlot; prefer: RoleSlot }[];
+  /** 指定服事（規格 §7.12） */
+  pins: PinIndex;
 }
 
 export function indexConstraints(constraints: readonly Constraint[]): RuleIndex {
@@ -77,6 +80,7 @@ export function indexConstraints(constraints: readonly Constraint[]): RuleIndex 
     forbiddenTogether: new Map(),
     substitutes: new Map(),
     preferredCombos: [],
+    pins: emptyPinIndex(),
   };
 
   let consecutiveWeeksSeen = false;
@@ -183,6 +187,10 @@ export function indexConstraints(constraints: readonly Constraint[]): RuleIndex 
 
       case 'preferred_role_combination':
         index.preferredCombos.push({ when: c.when, prefer: c.prefer });
+        break;
+
+      case 'fixed_assignment':
+        addPins(index.pins, c);
         break;
     }
   }

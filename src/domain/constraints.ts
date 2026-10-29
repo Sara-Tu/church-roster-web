@@ -1,14 +1,15 @@
 /**
- * 步驟 5：16 種限制條件的中文說明、空白樣板、欄位檢查與 JSON 解析。規格 §5、§7.6.4。
+ * 步驟 5：17 種限制條件的中文說明、空白樣板、欄位檢查與 JSON 解析。規格 §5、§7.6.4。
  *
  * engine 的 validateProject 只查 id 參照對不對，欄位有沒有填完是 UI 的責任，
  * 所以這一層自己做形狀檢查，新增的規則一律留空並標紅，不自動填第一個人。
  */
 
-import { isIsoDate, monthOf } from '../engine';
+import { isIsoDate, monthOf, weeksBetween } from '../engine';
 import type {
   Constraint,
   ConstraintType,
+  IsoDate,
   MemberId,
   Project,
   Role,
@@ -158,6 +159,16 @@ export const CONSTRAINT_META: readonly ConstraintMeta[] = [
     hint: '某個人只能排在某一天之後、之前，或兩者之間。',
     defaultHard: true,
   },
+  {
+    type: 'fixed_assignment',
+    label: '指定服事',
+    group: 'rotation',
+    hint:
+      '指定某人在某幾天一定排某個位置，一次可以勾很多天。跟其他規則衝突時以指定為優先，' +
+      '卡片上會用橘字提醒。次數上限會先扣掉指定的次數，例如上限 3 次、指定 2 天，' +
+      '指定日期以外最多再排 1 次。',
+    defaultHard: true,
+  },
 ];
 
 const META_BY_TYPE = new Map(CONSTRAINT_META.map((meta) => [meta.type, meta]));
@@ -242,6 +253,16 @@ export function blankConstraint(type: ConstraintType, id: string): Constraint {
         when: { memberId: '', roleId: '' },
         prefer: { memberId: '', roleId: '' },
       };
+    case 'fixed_assignment':
+      return {
+        ...base,
+        type,
+        memberId: '',
+        roleId: '',
+        dates: [],
+        onlyPinnedDates: false,
+        onlyRoleIds: [],
+      };
   }
 }
 
@@ -274,6 +295,11 @@ function roleNames(project: Project, ids: readonly RoleId[], separator = '＋'):
 
 function slotText(project: Project, slot: RoleSlot): string {
   return `${memberName(project, slot.memberId)} ${roleName(project, slot.roleId)}`;
+}
+
+/** MM/DD，與服事表一致 */
+function md(date: IsoDate): string {
+  return `${date.slice(5, 7)}/${date.slice(8, 10)}`;
 }
 
 /** 釘選值的中文說明：1 起算的「當月第 N 次聚會」，-1 代表當月最後一次 */
@@ -399,6 +425,23 @@ export function describeConstraint(project: Project, constraint: Constraint): st
         project,
         constraint.prefer,
       )}`;
+
+    case 'fixed_assignment': {
+      const dates =
+        constraint.dates.length === 0
+          ? '（還沒選日期）'
+          : [...constraint.dates].sort().map(md).join('、');
+      const base = `${memberName(project, constraint.memberId)} 在 ${dates} 擔任 ${roleName(
+        project,
+        constraint.roleId,
+      )}`;
+      if (!constraint.onlyPinnedDates) return base;
+      return `${base}；指定日期以外不排${
+        constraint.onlyRoleIds.length === 0
+          ? '任何位置'
+          : roleNames(project, constraint.onlyRoleIds, '、')
+      }`;
+    }
   }
 }
 
@@ -561,10 +604,238 @@ export function validateConstraint(project: Project, constraint: Constraint): st
       member(constraint.prefer.memberId, '還沒選第二個人');
       role(constraint.prefer.roleId, '第二個人還沒選位置');
       break;
+
+    case 'fixed_assignment':
+      member(constraint.memberId);
+      role(constraint.roleId);
+      if (constraint.dates.length === 0) issues.push('還沒選日期');
+      constraint.onlyRoleIds.forEach((id) => role(id));
+      issues.push(...pinIssues(project, constraint));
+      break;
   }
 
   // 同一條規則裡同樣的毛病只講一次
   return [...new Set(issues)];
+}
+
+// ── 指定服事（規格 §7.12.5）─────────────────────────────────────────────────
+
+type FixedAssignment = Extract<Constraint, { type: 'fixed_assignment' }>;
+
+/** 其他已啟用的指定服事卡片 */
+function otherPins(project: Project, constraint: FixedAssignment): FixedAssignment[] {
+  return project.constraints.filter(
+    (item): item is FixedAssignment =>
+      item.enabled && item.type === 'fixed_assignment' && item.id !== constraint.id,
+  );
+}
+
+/**
+ * 要修正的（紅字，擋住產生班表）：資料本身對不上，排下去一定是錯的。
+ * 跟其他規則衝突的不在這裡，見 constraintNotices。
+ */
+function pinIssues(project: Project, constraint: FixedAssignment): string[] {
+  const issues: string[] = [];
+  const person = project.members.find((item) => item.id === constraint.memberId);
+  const role = roleOf(project, constraint.roleId);
+  if (person === undefined || role === undefined) return issues;
+  const who = memberName(project, person.id);
+
+  if (!person.roles.includes(role.id)) issues.push(`${who}沒有登記${role.name}這個位置`);
+
+  const weeks = new Map(project.term.weeks.map((week) => [week.date, week]));
+  const unavailable = new Set(person.unavailable);
+  const others = otherPins(project, constraint);
+
+  for (const date of [...constraint.dates].sort()) {
+    if (!isIsoDate(date)) {
+      issues.push(`日期不合法：${date}`);
+      continue;
+    }
+    const week = weeks.get(date);
+    if (week === undefined) {
+      issues.push(`${md(date)} 不是這個梯次的聚會日`);
+      continue;
+    }
+    if (role.appliesTo.kind === 'weekTag' && !week.tags.includes(role.appliesTo.tagId)) {
+      issues.push(`${role.name}在 ${md(date)} 不排`);
+    }
+    if (unavailable.has(date)) issues.push(`${md(date)} 是${who}不行的日期`);
+
+    for (const other of others) {
+      if (
+        other.memberId === person.id &&
+        other.roleId !== role.id &&
+        other.dates.includes(date) &&
+        !allowsBoth(project, person.id, role.id, other.roleId)
+      ) {
+        issues.push(`${md(date)} ${who}同時被指定為${role.name}和${roleName(project, other.roleId)}`);
+      }
+    }
+
+    const pinned = new Set([
+      person.id,
+      ...others
+        .filter((other) => other.roleId === role.id && other.dates.includes(date))
+        .map((other) => other.memberId),
+    ]);
+    if (pinned.size > role.perWeek) {
+      issues.push(`${md(date)} 指定為${role.name}的有 ${pinned.size} 人，每週只需要 ${role.perWeek} 人`);
+    }
+  }
+  return issues;
+}
+
+function allowsBoth(project: Project, memberId: MemberId, first: RoleId, second: RoleId): boolean {
+  const allowed = new Set<RoleId>();
+  for (const item of project.constraints) {
+    if (item.enabled && item.type === 'dual_role_exception' && item.memberId === memberId) {
+      item.roleIds.forEach((id) => allowed.add(id));
+    }
+  }
+  return allowed.has(first) && allowed.has(second);
+}
+
+/**
+ * 只提醒（橘字，不擋）：指定跟其他規則衝突，照莎拉的決定以指定為優先（規格 §7.12.5）。
+ * 次數一律算這個人所有已啟用的指定（同一天同一個位置只算一次），因為上限是看總數。
+ */
+export function constraintNotices(project: Project, constraint: Constraint): string[] {
+  if (constraint.type !== 'fixed_assignment' || !constraint.enabled) return [];
+  const { memberId } = constraint;
+  if (memberId === '' || constraint.roleId === '') return [];
+
+  const pins = new Map<string, { date: IsoDate; roleId: RoleId }>();
+  for (const card of [constraint, ...otherPins(project, constraint)]) {
+    if (card.memberId !== memberId) continue;
+    for (const date of card.dates) {
+      if (isIsoDate(date)) pins.set(`${date}|${card.roleId}`, { date, roleId: card.roleId });
+    }
+  }
+  const all = [...pins.values()].sort((a, b) => (a.date < b.date ? -1 : 1));
+  const ownDates = new Set(constraint.dates);
+  const notices: string[] = [];
+  const over = (other: Constraint, detail: string) => {
+    notices.push(`${detail}，超過「${describeConstraint(project, other)}」`);
+  };
+
+  for (const other of project.constraints) {
+    if (!other.enabled || other.id === constraint.id) continue;
+    switch (other.type) {
+      case 'max_total_per_term':
+        if ((other.memberId === null || other.memberId === memberId) && all.length > other.max) {
+          over(other, `整梯次指定了 ${all.length} 次`);
+        }
+        break;
+
+      case 'max_per_month': {
+        if (other.memberId !== null && other.memberId !== memberId) break;
+        const byMonth = new Map<number, number>();
+        for (const pin of all) {
+          if (other.roleId !== null && pin.roleId !== other.roleId) continue;
+          const month = monthOf(pin.date);
+          byMonth.set(month, (byMonth.get(month) ?? 0) + 1);
+        }
+        for (const [month, count] of byMonth) {
+          if (count > other.max) over(other, `${month} 月指定了 ${count} 次`);
+        }
+        break;
+      }
+
+      case 'max_per_term_role': {
+        if (other.memberId !== memberId) break;
+        const count = all.filter((pin) => pin.roleId === other.roleId).length;
+        if (count > other.max) {
+          over(other, `${roleName(project, other.roleId)}指定了 ${count} 次`);
+        }
+        break;
+      }
+
+      case 'role_frequency': {
+        const dates = all.filter((pin) => pin.roleId === other.roleId).map((pin) => pin.date);
+        if (dates.length > other.maxPerTerm) {
+          over(other, `${roleName(project, other.roleId)}指定了 ${dates.length} 次`);
+        }
+        for (let i = 1; i < dates.length; i++) {
+          if (weeksBetween(dates[i - 1], dates[i]) < other.minGapWeeks) {
+            over(other, `${md(dates[i - 1])} 和 ${md(dates[i])} 間隔不到 ${other.minGapWeeks} 週`);
+          }
+        }
+        break;
+      }
+
+      case 'max_consecutive_weeks_per_member': {
+        const dates = [...new Set(all.map((pin) => pin.date))];
+        let pairs = 0;
+        for (let i = 1; i < dates.length; i++) {
+          if (weeksBetween(dates[i - 1], dates[i]) === 1) pairs++;
+        }
+        if (pairs > other.max) over(other, `指定的日期裡有 ${pairs} 次連續兩週服事`);
+        break;
+      }
+
+      case 'availability_window':
+        if (other.memberId !== memberId) break;
+        for (const date of [...ownDates].sort()) {
+          if (
+            (other.from !== undefined && date < other.from) ||
+            (other.until !== undefined && date > other.until)
+          ) {
+            notices.push(`${md(date)} 不在「${describeConstraint(project, other)}」的範圍內`);
+          }
+        }
+        break;
+
+      case 'forbidden_together':
+        if (other.roleId !== constraint.roleId || !other.memberIds.includes(memberId)) break;
+        for (const date of [...ownDates].sort()) {
+          if (pinnedTogether(project, other.memberIds, memberId, other.roleId, date)) {
+            notices.push(`${md(date)} 跟「${describeConstraint(project, other)}」衝突`);
+          }
+        }
+        break;
+
+      case 'forbidden_role_combination': {
+        const own = other.entries.find((entry) => entry.memberId === memberId);
+        if (own === undefined) break;
+        if (own.roleIds.length > 0 && !own.roleIds.includes(constraint.roleId)) break;
+        for (const date of [...ownDates].sort()) {
+          const clash = other.entries.some(
+            (entry) =>
+              entry.memberId !== memberId &&
+              otherPins(project, constraint).some(
+                (card) =>
+                  card.memberId === entry.memberId &&
+                  card.dates.includes(date) &&
+                  (entry.roleIds.length === 0 || entry.roleIds.includes(card.roleId)),
+              ),
+          );
+          if (clash) notices.push(`${md(date)} 跟「${describeConstraint(project, other)}」衝突`);
+        }
+        break;
+      }
+    }
+  }
+  return [...new Set(notices)];
+}
+
+/** 同一天、同一個位置，名單裡還有別人也被指定 */
+function pinnedTogether(
+  project: Project,
+  memberIds: readonly MemberId[],
+  self: MemberId,
+  roleId: RoleId,
+  date: IsoDate,
+): boolean {
+  return project.constraints.some(
+    (item) =>
+      item.enabled &&
+      item.type === 'fixed_assignment' &&
+      item.memberId !== self &&
+      memberIds.includes(item.memberId) &&
+      item.roleId === roleId &&
+      item.dates.includes(date),
+  );
 }
 
 /** 這個梯次有幾個不同的月份。沿用引擎的語意：只看月份數字，不看年份 */
@@ -931,6 +1202,16 @@ function readConstraint(raw: Record<string, unknown>): ConstraintBody {
         type: 'preferred_role_combination',
         when: slot(raw, 'when'),
         prefer: slot(raw, 'prefer'),
+      };
+    case 'fixed_assignment':
+      return {
+        type: 'fixed_assignment',
+        memberId: str(raw, 'memberId'),
+        roleId: str(raw, 'roleId'),
+        dates: strArray(raw, 'dates'),
+        // 省略＝照常排、所有位置
+        onlyPinnedDates: raw.onlyPinnedDates === undefined ? false : bool(raw, 'onlyPinnedDates'),
+        onlyRoleIds: raw.onlyRoleIds === undefined ? [] : strArray(raw, 'onlyRoleIds'),
       };
   }
 }

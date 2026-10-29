@@ -3,7 +3,7 @@
  *
  * 四張工作表與全部樣式都照舊 Python 版的 `src/output.py` 搬過來 ——
  * 驗收條件是「跟現有的 r9 檔案欄位、樣式一致」，所以欄寬、列高、底色、
- * 斑馬紋的起始列都不能自己發揮。第五張「偏好沒達成」是新的，舊版沒有這張。
+ * 斑馬紋的起始列都不能自己發揮。「偏好沒達成」與「不行日期」是新的，舊版沒有。
  *
  * exceljs 只在按下載的時候才載入（規格 §9：套件延後載入）。
  */
@@ -11,6 +11,7 @@
 import type { Workbook, Worksheet } from 'exceljs';
 import type { Project, Role, RosterResult } from '../engine';
 import { buildView, formatMd, roleName } from '../domain/roster';
+import { unavailableRows } from '../domain/unavailable';
 import type { PersonRow, RosterView } from '../domain/roster';
 
 const FONT = '微軟正黑體';
@@ -170,6 +171,23 @@ function buildSoftSheet(ws: Worksheet, view: RosterView): void {
   });
 }
 
+/** 不行日期（規格 §7.12.7）：兩欄「人｜不行日期」，樣式比照「偏好沒達成」 */
+function buildUnavailableSheet(ws: Worksheet, project: Project): void {
+  paint(ws, 1, 1, '人', { bold: true, fill: HEADER_FILL });
+  paint(ws, 1, 2, '不行日期', { bold: true, fill: HEADER_FILL });
+  ws.getColumn(1).width = 14;
+  ws.getColumn(2).width = 60;
+  ws.getRow(1).height = 22;
+
+  unavailableRows(project).forEach((person, i) => {
+    const row = i + 2;
+    const fill = rowFill(i, false);
+    paint(ws, row, 1, person.name, { fill });
+    paint(ws, row, 2, person.dates, { fill, align: 'left' });
+    ws.getRow(row).height = 20;
+  });
+}
+
 async function newWorkbook(): Promise<Workbook> {
   const loaded = (await import('exceljs')) as unknown as Record<string, unknown>;
   const fallback = (loaded.default ?? {}) as Record<string, unknown>;
@@ -189,13 +207,28 @@ export async function buildWorkbook(project: Project, result: RosterResult): Pro
   buildTimelineSheet(wb.addWorksheet('人員彙整（時序）'), view, served);
   if (view.warnings.length > 0) buildWarningSheet(wb.addWorksheet('警告'), view);
   if (view.soft.length > 0) buildSoftSheet(wb.addWorksheet('偏好沒達成'), view);
+  buildUnavailableSheet(wb.addWorksheet('不行日期'), project);
   return wb;
 }
 
-export async function rosterXlsx(project: Project, result: RosterResult): Promise<Blob> {
-  const wb = await buildWorkbook(project, result);
+async function toBlob(wb: Workbook): Promise<Blob> {
   const buffer = await wb.xlsx.writeBuffer();
   return new Blob([buffer], {
     type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
   });
+}
+
+export async function rosterXlsx(project: Project, result: RosterResult): Promise<Blob> {
+  return toBlob(await buildWorkbook(project, result));
+}
+
+/** 步驟 4 的獨立下載：只有「不行日期」這一張 */
+export async function buildUnavailableWorkbook(project: Project): Promise<Workbook> {
+  const wb = await newWorkbook();
+  buildUnavailableSheet(wb.addWorksheet('不行日期'), project);
+  return wb;
+}
+
+export async function unavailableXlsx(project: Project): Promise<Blob> {
+  return toBlob(await buildUnavailableWorkbook(project));
 }

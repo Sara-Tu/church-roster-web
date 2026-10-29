@@ -9,10 +9,19 @@
  */
 
 import type { EngineContext } from './context';
+import { monthOf, weeksBetween } from './dates';
+import { nextPinOfRole, pinnedNextWeek, pinPairsAfter, pinsAfter } from './pins';
 import type { ForbiddenComboEntry } from './rules';
 import type { BlockReason, IsoDate, MemberId, RoleId } from './schema';
 
 export type WeekAssignments = Readonly<Record<RoleId, MemberId[]>>;
+
+/**
+ * normal：一般排班，上限會預先扣掉之後還沒到的指定服事（規格 §7.12.3）。
+ * pin：查指定服事本身有沒有違反規則 —— 不預扣（不然第一次指定就會被自己後面的
+ * 指定擋下），也不看「指定日期以外不排」。
+ */
+export type CheckMode = 'normal' | 'pin';
 
 export function canServe(
   ctx: EngineContext,
@@ -36,7 +45,11 @@ export function blockReason(
   date: IsoDate,
   excluded: ReadonlySet<MemberId>,
   weekAssignments: WeekAssignments,
+  mode: CheckMode = 'normal',
 ): BlockReason | null {
+  const pins = ctx.rules.pins;
+  const reserve = mode === 'normal';
+
   if (excluded.has(memberId)) {
     return { kind: 'assigned_elsewhere', roleId: roleOfMember(weekAssignments, memberId) };
   }
@@ -45,6 +58,13 @@ export function blockReason(
   if (member === undefined || !member.roles.includes(roleId)) return { kind: 'not_in_role' };
 
   if (ctx.unavailable.get(memberId)?.has(date)) return { kind: 'unavailable' };
+
+  if (reserve) {
+    for (const rule of pins.onlyPinned.get(memberId) ?? []) {
+      if (rule.dates.has(date)) continue;
+      if (rule.roleIds === null || rule.roleIds.has(roleId)) return { kind: 'pinned_dates_only' };
+    }
+  }
 
   for (const window of ctx.rules.windows.get(memberId) ?? []) {
     if (window.until !== undefined && date > window.until) return { kind: 'outside_window' };
@@ -60,39 +80,61 @@ export function blockReason(
         : limit.roleId === roleId
           ? ctx.state.monthlyRoleOf(memberId, roleId, date)
           : -1;
-    if (used >= limit.max) {
-      return { kind: 'max_per_month', max: limit.max, roleId: limit.roleId };
+    if (used < 0) continue;
+    const reserved = reserve
+      ? pinsAfter(pins, memberId, date, { roleId: limit.roleId, month: monthOf(date) })
+      : 0;
+    if (used + reserved >= limit.max) {
+      return withReserved(
+        { kind: 'max_per_month', max: limit.max, roleId: limit.roleId },
+        used < limit.max ? reserved : 0,
+      );
     }
   }
 
+  const termReserved = reserve ? pinsAfter(pins, memberId, date) : 0;
   for (const limit of ctx.rules.maxTotalPerTerm) {
     if (limit.memberId !== null && limit.memberId !== memberId) continue;
-    if (ctx.state.termTotalOf(memberId) >= limit.max) {
-      return { kind: 'max_total_per_term', max: limit.max };
+    const used = ctx.state.termTotalOf(memberId);
+    if (used + termReserved >= limit.max) {
+      return withReserved(
+        { kind: 'max_total_per_term', max: limit.max },
+        used < limit.max ? termReserved : 0,
+      );
     }
   }
 
-  if (
-    ctx.state.servedLastWeek(memberId, date) &&
-    ctx.state.consecutiveOf(memberId) >= ctx.rules.maxConsecutiveWeeks
-  ) {
-    return { kind: 'max_consecutive_weeks', max: ctx.rules.maxConsecutiveWeeks };
-  }
+  const consecutive = consecutiveBlock(ctx, memberId, date, reserve);
+  if (consecutive !== null) return consecutive;
 
+  const roleReserved = reserve ? pinsAfter(pins, memberId, date, { roleId }) : 0;
+  const roleUsed = ctx.state.termRoleOf(memberId, roleId);
   for (const limit of ctx.rules.maxPerTermRole) {
     if (limit.memberId !== memberId || limit.roleId !== roleId) continue;
-    if (ctx.state.termRoleOf(memberId, roleId) >= limit.max) {
-      return { kind: 'max_per_term_role', max: limit.max };
+    if (roleUsed + roleReserved >= limit.max) {
+      return withReserved(
+        { kind: 'max_per_term_role', max: limit.max },
+        roleUsed < limit.max ? roleReserved : 0,
+      );
     }
   }
 
   const frequency = ctx.rules.roleFrequency.get(roleId);
   if (frequency !== undefined) {
-    if (ctx.state.termRoleOf(memberId, roleId) >= frequency.maxPerTerm) {
-      return { kind: 'role_frequency_total', max: frequency.maxPerTerm };
+    if (roleUsed + roleReserved >= frequency.maxPerTerm) {
+      return withReserved(
+        { kind: 'role_frequency_total', max: frequency.maxPerTerm },
+        roleUsed < frequency.maxPerTerm ? roleReserved : 0,
+      );
     }
     if (ctx.state.weeksSinceRole(memberId, roleId, date) < frequency.minGapWeeks) {
       return { kind: 'role_frequency_gap', minGapWeeks: frequency.minGapWeeks };
+    }
+    if (reserve) {
+      const next = nextPinOfRole(pins, memberId, roleId, date);
+      if (next !== undefined && weeksBetween(date, next) < frequency.minGapWeeks) {
+        return { kind: 'role_frequency_gap', minGapWeeks: frequency.minGapWeeks, ahead: true };
+      }
     }
   }
 
@@ -101,6 +143,40 @@ export function blockReason(
   }
 
   return null;
+}
+
+/** reserved 是 0 就不加欄位，讓沒有指定服事時的物件跟以前一模一樣 */
+function withReserved<T extends BlockReason>(reason: T, reserved: number): T {
+  return reserved > 0 ? { ...reason, reserved } : reason;
+}
+
+/**
+ * 「連續兩週服事」整梯次的次數上限。排這一週會新增幾次：上週有服事 +1、下週有
+ * 指定 +1；之後的指定彼此相連的次數不管這週排不排都會發生，先扣掉（規格 §7.12.3）。
+ * 沒有指定時就是原本的 `servedLastWeek && consecutiveOf >= max`。
+ */
+function consecutiveBlock(
+  ctx: EngineContext,
+  memberId: MemberId,
+  date: IsoDate,
+  reserve: boolean,
+): BlockReason | null {
+  const max = ctx.rules.maxConsecutiveWeeks;
+  // 本週已經在服事（一人兩職）：再排一個位置不會多一次連續
+  if (ctx.state.lastServedOf(memberId) === date) return null;
+
+  const fromLastWeek = ctx.state.servedLastWeek(memberId, date) ? 1 : 0;
+  const pins = ctx.rules.pins;
+  const intoNextWeek = reserve && pinnedNextWeek(pins, memberId, date) ? 1 : 0;
+  const added = fromLastWeek + intoNextWeek;
+  if (added === 0) return null;
+
+  const used = ctx.state.consecutiveOf(memberId);
+  const ahead = reserve ? pinPairsAfter(pins, memberId, date) : 0;
+  if (used + ahead + added <= max) return null;
+
+  const withoutPins = fromLastWeek === 1 && used >= max;
+  return withReserved({ kind: 'max_consecutive_weeks', max }, withoutPins ? 0 : ahead + intoNextWeek);
 }
 
 /** 這個人本週已經被排在哪個位置。找不到就回 null（例如成對指派還沒寫進去的主角色） */

@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import type { Constraint, ConstraintType } from '../engine';
 import {
+  constraintNotices,
   constraintsToJson,
   describeConstraint,
   GROUP_LABELS,
@@ -154,6 +155,7 @@ function ConstraintCard({
 
   const meta = metaOf(constraint.type);
   const issues = validateConstraint(project, constraint);
+  const notices = constraintNotices(project, constraint);
 
   return (
     <li
@@ -170,6 +172,10 @@ function ConstraintCard({
           )}
           {issues.length > 0 && (
             <p className="mt-1 text-xs text-alert">{issues.join('；')}</p>
+          )}
+          {/* 跟其他規則衝突只提醒，以指定為優先（規格 §7.12.5） */}
+          {notices.length > 0 && (
+            <p className="mt-1 text-xs text-notice">提醒：{notices.join('；')}</p>
           )}
         </div>
 

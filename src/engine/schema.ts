@@ -164,7 +164,21 @@ export type Constraint =
       prefer: MemberId[];
       lastResort: MemberId[];
     })
-  | (ConstraintBase & { type: 'preferred_role_combination'; when: RoleSlot; prefer: RoleSlot });
+  | (ConstraintBase & { type: 'preferred_role_combination'; when: RoleSlot; prefer: RoleSlot })
+  | (ConstraintBase & {
+      /**
+       * 指定服事：這個人在這幾天一定排這個位置，與其他規則衝突時以指定為優先。
+       * 一般排班檢查上限時會預先扣掉之後還沒到的指定。見規格 §7.12
+       */
+      type: 'fixed_assignment';
+      memberId: MemberId;
+      roleId: RoleId;
+      dates: IsoDate[];
+      /** true = 指定日期以外，onlyRoleIds 裡的位置都不排他 */
+      onlyPinnedDates: boolean;
+      /** onlyPinnedDates 為 true 才有作用。空陣列＝所有位置 */
+      onlyRoleIds: RoleId[];
+    });
 
 export interface RoleSlot {
   memberId: MemberId;
@@ -204,19 +218,29 @@ export interface BlockedCandidate {
   reason: BlockReason | null;
 }
 
-/** 擋住一個人的第一個原因。順序與 eligibility.ts 的檢查順序一致 */
+/**
+ * 擋住一個人的第一個原因。順序與 eligibility.ts 的檢查順序一致。
+ *
+ * `reserved`：之後還沒到的指定服事先扣掉了幾次（規格 §7.12.3）。只有「沒有預扣
+ * 就不會擋」的時候才會出現，所以沒有指定服事時這些物件跟加這個欄位之前一樣。
+ */
 export type BlockReason =
   | { kind: 'not_in_role' }
   | { kind: 'assigned_elsewhere'; roleId: RoleId | null }
   | { kind: 'unavailable' }
+  /** 指定服事選了「指定日期以外不排」（規格 §7.12.4） */
+  | { kind: 'pinned_dates_only' }
   | { kind: 'outside_window' }
-  | { kind: 'max_per_month'; max: number; roleId: RoleId | null }
-  | { kind: 'max_total_per_term'; max: number }
-  | { kind: 'max_consecutive_weeks'; max: number }
-  | { kind: 'max_per_term_role'; max: number }
-  | { kind: 'role_frequency_total'; max: number }
-  | { kind: 'role_frequency_gap'; minGapWeeks: number }
+  | { kind: 'max_per_month'; max: number; roleId: RoleId | null; reserved?: number }
+  | { kind: 'max_total_per_term'; max: number; reserved?: number }
+  | { kind: 'max_consecutive_weeks'; max: number; reserved?: number }
+  | { kind: 'max_per_term_role'; max: number; reserved?: number }
+  | { kind: 'role_frequency_total'; max: number; reserved?: number }
+  /** ahead = 擋住的是之後的指定服事，不是上一次排的 */
+  | { kind: 'role_frequency_gap'; minGapWeeks: number; ahead?: true }
   | { kind: 'forbidden_combination' }
+  /** 指定服事專用：跟同一個位置已經排定的人有「不能同一個位置」的規則 */
+  | { kind: 'forbidden_together' }
   /** 成對位置專用：這個人本身排得上，但找不到配角 */
   | { kind: 'no_partner'; roleId: RoleId }
   /** 部分填滿專用：這個人本身排得上，但跟已經排定的人湊不成合法組合（規格 §7.11） */

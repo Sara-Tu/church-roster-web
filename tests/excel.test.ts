@@ -107,11 +107,14 @@ describe('Excel 下載：與舊 Python 版的 r9 格式一致', () => {
   it('四張工作表逐格相同（值、底色、字體、對齊、框線、欄寬、列高、合併）', async () => {
     const result = withWarnings(runScheduler(project));
     const wb = await buildWorkbook(project, result);
-    const dump = { sheets: wb.worksheets.map(dumpSheet) };
+    // 舊版沒有「不行日期」這張（規格 §7.12.7），只比對 golden 裡有的那幾張
+    const dump = {
+      sheets: wb.worksheets.filter((sheet) => sheet.name !== '不行日期').map(dumpSheet),
+    };
     expect(dump).toEqual(goldenExcel);
   });
 
-  it('沒有警告也沒有偏好紀錄的時候只有三張工作表', async () => {
+  it('沒有警告也沒有偏好紀錄的時候只有三張工作表加上不行日期', async () => {
     const wb = await buildWorkbook(project, {
       ...runScheduler(project),
       softViolations: [],
@@ -120,6 +123,7 @@ describe('Excel 下載：與舊 Python 版的 r9 格式一致', () => {
       '服事表',
       '人員彙整（角色）',
       '人員彙整（時序）',
+      '不行日期',
     ]);
   });
 

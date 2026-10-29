@@ -3,7 +3,15 @@
 export { runScheduler } from './run';
 export { ProjectValidationError, validateProject } from './context';
 export { SCHEMA_VERSION } from './schema';
-export { addDays, fromEpochDay, isIsoDate, monthOf, toEpochDay, weekdayOf } from './dates';
+export {
+  addDays,
+  fromEpochDay,
+  isIsoDate,
+  monthOf,
+  toEpochDay,
+  weekdayOf,
+  weeksBetween,
+} from './dates';
 export type {
   BlockedCandidate,
   BlockedGroup,

@@ -224,6 +224,7 @@ function referencedMembers(constraint: Constraint): MemberId[] {
     case 'max_per_term_role':
     case 'availability_window':
     case 'min_per_term':
+    case 'fixed_assignment':
       return [constraint.memberId];
     // null ＝ 套用到每一個人，沒有要檢查的參照
     case 'max_per_month':
@@ -266,12 +267,15 @@ function referencedRoles(constraint: Constraint): RoleId[] {
       return [constraint.roleId];
     case 'preferred_role_combination':
       return [constraint.when.roleId, constraint.prefer.roleId];
+    case 'fixed_assignment':
+      return [constraint.roleId, ...constraint.onlyRoleIds];
     default:
       return [];
   }
 }
 
 function referencedDates(constraint: Constraint): IsoDate[] {
+  if (constraint.type === 'fixed_assignment') return constraint.dates;
   if (constraint.type !== 'availability_window') return [];
   const dates: IsoDate[] = [];
   if (constraint.from !== undefined) dates.push(constraint.from);
